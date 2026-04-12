@@ -1,17 +1,18 @@
 import triton
 import triton.language as tl
 
-from triton_vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
-    float_to_fixed,
-    fixed_to_float,
+from .fixed_point import (
+    flp_2_fxp,
+    fxp_to_flp,
 )
 
 # Temporary constant for testing.
 # These params will be deferred to user input in future.
 TEMP_FRACTIONAL_BITS: tl.constexpr = tl.constexpr(16)
 
+
 @triton.jit
-def fp_gemm(
+def gemm_fxp_kernel(
     a_row_ptrs,
     b_col_ptrs,
     stride_a_k,
@@ -21,8 +22,8 @@ def fp_gemm(
     Lk,
     ROWS: tl.constexpr,
     COLS: tl.constexpr,
-    K: tl.constexpr,          
-    D_CHUNK: tl.constexpr,    
+    K: tl.constexpr,
+    D_CHUNK: tl.constexpr,
     FRAC_BITS: tl.constexpr,
     RETURN_FXP: tl.constexpr = False,
 ):
@@ -45,23 +46,21 @@ def fp_gemm(
         ).to(tl.float32)
 
         prod = a[:, :, None] * b[None, :, :]
-        acc += tl.sum(float_to_fixed(prod, FRAC_BITS, tl.int32), axis=1)
+        acc += tl.sum(flp_2_fxp(prod, FRAC_BITS, tl.int32), axis=1)
 
     if RETURN_FXP:
         return acc
-    return fixed_to_float(acc, FRAC_BITS, tl.float32)
+    return fxp_to_flp(acc, FRAC_BITS, tl.float32)
 
 
 @triton.jit
-def fp_dot_chunk(a, b, FRAC_BITS: tl.constexpr):
+def dot_chunk_fxp(a, b, FRAC_BITS: tl.constexpr):
     prod = a[:, :, None] * b[None, :, :]
-    return tl.sum(float_to_fixed(prod, FRAC_BITS, tl.int32), axis=1)
-
-
+    return tl.sum(flp_2_fxp(prod, FRAC_BITS, tl.int32), axis=1)
 
 
 @triton.jit
-def gemm_fp_kernel(
+def gemm_fxp(
     a_ptr,
     b_ptr,
     c_ptr,
@@ -108,7 +107,7 @@ def gemm_fp_kernel(
     a_row_ptrs = a_ptr + offs_m * stride_am
     b_col_ptrs = b_ptr + offs_n * stride_bn
 
-    c = fp_gemm(
+    c = gemm_fxp_kernel(
         a_row_ptrs,
         b_col_ptrs,
         stride_a_k=stride_ak,

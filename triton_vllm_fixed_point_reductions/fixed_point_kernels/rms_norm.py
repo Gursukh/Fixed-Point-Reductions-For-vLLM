@@ -2,13 +2,13 @@ import triton
 import triton.language as tl
 
 from triton_vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
-    float_to_fixed,
-    fixed_to_float,
+    flp_2_fxp,
+    fxp_to_flp,
 )
 
 
 @triton.jit
-def rms_norm_fp_kernel(
+def rms_norm_fxp_kernel(
     X_ptr,
     W_ptr,
     Y_ptr,
@@ -28,9 +28,11 @@ def rms_norm_fp_kernel(
     x_sq = x * x
 
     # Cast x^2 to fixed-point, reduce, then cast back to float for the reciprocal sqrt
-    x_sq_fxp = float_to_fixed(x_sq, frac_bits=16, dtype=tl.int32)
+    x_sq_fxp = flp_2_fxp(x_sq, fractional_bit_width=16, fixed_point_type=tl.int32)
     sum_fxp = tl.sum(x_sq_fxp, axis=0)
-    sum_float = fixed_to_float(sum_fxp, frac_bits=16, dtype=tl.float32)
+    sum_float = fxp_to_flp(
+        sum_fxp, fractional_bit_width=16, floating_point_type=tl.float32
+    )
 
     rrms = 1.0 / tl.sqrt(sum_float / hidden_size + eps)
 

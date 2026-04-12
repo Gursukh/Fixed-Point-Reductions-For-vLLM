@@ -2,16 +2,16 @@ import torch
 import triton
 import triton.language as tl
 from triton_vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
-    fixed_to_float,
-    float_to_fixed,
+    fxp_to_flp,
+    flp_2_fxp,
 )
-from .gemm import fp_gemm, fp_dot_chunk
+from .gemm import gemm_fxp_kernel, dot_chunk_fxp
 
 RCP_LN2 = 1.4426950408889634
 
 
 @triton.jit
-def prefill_fp_kernel(
+def prefill_fxp_kernel(
     Q,
     K,
     V,
@@ -72,7 +72,7 @@ def prefill_fp_kernel(
             K + (cur_batch_start + pos_k) * stride_kbs + cur_kv_head * stride_kh
         )
 
-        qk = fp_gemm(
+        qk = gemm_fxp_kernel(
             q_row_ptrs,
             k_col_ptrs,
             stride_a_k=1,
@@ -106,7 +106,7 @@ def prefill_fp_kernel(
             K + (cur_batch_start + pos_k) * stride_kbs + cur_kv_head * stride_kh
         )
 
-        qk = fp_gemm(
+        qk = gemm_fxp_kernel(
             q_row_ptrs,
             k_col_ptrs,
             stride_a_k=1,
@@ -128,7 +128,7 @@ def prefill_fp_kernel(
 
         p = tl.math.exp2(qk - m_i[:, None])
 
-        p_fxp = float_to_fixed(p, FRAC_BITS, tl.int32)
+        p_fxp = flp_2_fxp(p, FRAC_BITS, tl.int32)
         l_i_fxp += tl.sum(p_fxp, axis=1)
 
         v = tl.load(
@@ -139,10 +139,10 @@ def prefill_fp_kernel(
             other=0.0,
         ).to(tl.float32)
 
-        acc_fxp += fp_dot_chunk(p, v, FRAC_BITS)
+        acc_fxp += dot_chunk_fxp(p, v, FRAC_BITS)
 
-    l_i = fixed_to_float(l_i_fxp, FRAC_BITS, tl.float32)
-    acc = fixed_to_float(acc_fxp, FRAC_BITS, tl.float32)
+    l_i = fxp_to_flp(l_i_fxp, FRAC_BITS, tl.float32)
+    acc = fxp_to_flp(acc_fxp, FRAC_BITS, tl.float32)
     acc = acc / l_i[:, None]
 
     off_o = (
@@ -157,7 +157,7 @@ def prefill_fp_kernel(
     )
 
 
-def context_attention_fwd_fp_kernel(
+def context_attention_fwd_fxp_kernel(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -181,7 +181,7 @@ def context_attention_fwd_fp_kernel(
 
     grid = (batch, head, triton.cdiv(max_input_len, BLOCK_M))
 
-    prefill_fp_kernel[grid](
+    prefill_fxp_kernel[grid](
         q,
         k,
         v,

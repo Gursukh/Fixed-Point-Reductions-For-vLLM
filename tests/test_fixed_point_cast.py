@@ -1,6 +1,6 @@
 import pytest
 import torch
-from tests.fixed_point_helpers import f2x, requires_cuda, x2f
+from tests.fixed_point_helpers import flp2fxp, requires_cuda, fxp2flp
 
 
 @requires_cuda
@@ -42,14 +42,14 @@ def test_float_to_fixed_known_values():
         device="cuda",
         dtype=torch.int32,
     )
-    got = f2x(x, frac_bits, torch.int32)
+    got = flp2fxp(x, frac_bits, torch.int32)
     assert torch.equal(got, expected)
 
 
 @requires_cuda
 def test_float_to_fixed_saturation():
     x = torch.tensor([1e30, -1e30, 0.0], device="cuda", dtype=torch.float32)
-    got = f2x(x, 0, torch.int32)
+    got = flp2fxp(x, 0, torch.int32)
     imax = torch.iinfo(torch.int32).max
     imin = torch.iinfo(torch.int32).min
 
@@ -69,8 +69,8 @@ def test_float_roundtrip_lossless(frac_bits):
     )
     # keep only values that land exactly on the Q-format grid
     base = candidates[(candidates / step).frac() == 0]
-    q = f2x(base, frac_bits, torch.int32)
-    back = x2f(q, frac_bits, torch.float32)
+    q = flp2fxp(base, frac_bits, torch.int32)
+    back = fxp2flp(q, frac_bits, torch.float32)
     assert torch.equal(back, base), f"{base} -> {q} -> {back}"
 
 
@@ -82,7 +82,7 @@ def test_float_roundtrip_rounding():
     x = torch.tensor(
         [0.03, 0.1, 0.2, -0.03, -0.1, 0.7777], device="cuda", dtype=torch.float32
     )
-    back = x2f(f2x(x, frac_bits, torch.int32), frac_bits, torch.float32)
+    back = fxp2flp(flp2fxp(x, frac_bits, torch.int32), frac_bits, torch.float32)
 
     # result must land on the grid
     grid_err = (back / step).round() * step - back
@@ -102,8 +102,8 @@ def test_fixed_roundtrip_lossless(frac_bits):
     q = torch.tensor(
         [0, 1, -1, 123, -123, (1 << 20), -(1 << 20)], device="cuda", dtype=torch.int32
     )
-    f = x2f(q, frac_bits, torch.float32)
-    back = f2x(f, frac_bits, torch.int32)
+    f = fxp2flp(q, frac_bits, torch.float32)
+    back = flp2fxp(f, frac_bits, torch.int32)
     assert torch.equal(back, q)
 
 
@@ -116,8 +116,8 @@ def test_fixed_roundtrip_rounding():
         device="cuda",
         dtype=torch.int32,
     )
-    f = x2f(q, frac_bits, torch.float32)
-    back = f2x(f, frac_bits, torch.int32)
+    f = fxp2flp(q, frac_bits, torch.float32)
+    back = flp2fxp(f, frac_bits, torch.int32)
 
     # something must have changed
     assert not torch.equal(back, q)

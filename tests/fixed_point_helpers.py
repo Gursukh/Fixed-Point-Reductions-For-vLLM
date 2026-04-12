@@ -3,24 +3,31 @@ import torch
 import triton
 import triton.language as tl
 
-from triton_vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import float_to_fixed, fixed_to_float
+from triton_vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
+    flp_2_fxp,
+    fxp_to_flp,
+)
 
 
 @triton.jit
-def _f2x_kernel(x_ptr, y_ptr, n, frac_bits: tl.constexpr, BLOCK: tl.constexpr, OUT: tl.constexpr):
+def _flp2fxp_kernel(
+    x_ptr, y_ptr, n, frac_bits: tl.constexpr, BLOCK: tl.constexpr, OUT: tl.constexpr
+):
     offs = tl.arange(0, BLOCK)
     mask = offs < n
     x = tl.load(x_ptr + offs, mask=mask)
-    y = float_to_fixed(x, frac_bits, dtype=OUT)
+    y = flp_2_fxp(x, frac_bits, OUT)
     tl.store(y_ptr + offs, y, mask=mask)
 
 
 @triton.jit
-def _x2f_kernel(x_ptr, y_ptr, n, frac_bits: tl.constexpr, BLOCK: tl.constexpr, OUT: tl.constexpr):
+def _fxp2flp_kernel(
+    x_ptr, y_ptr, n, frac_bits: tl.constexpr, BLOCK: tl.constexpr, OUT: tl.constexpr
+):
     offs = tl.arange(0, BLOCK)
     mask = offs < n
     x = tl.load(x_ptr + offs, mask=mask)
-    y = fixed_to_float(x, frac_bits, dtype=OUT)
+    y = fxp_to_flp(x, frac_bits, OUT)
     tl.store(y_ptr + offs, y, mask=mask)
 
 
@@ -34,19 +41,19 @@ _TL = {
 }
 
 
-def f2x(x: torch.Tensor, frac_bits: tl.constexpr, out: torch.dtype) -> torch.Tensor:
+def flp2fxp(x: torch.Tensor, frac_bits: tl.constexpr, out: torch.dtype) -> torch.Tensor:
     n = x.numel()
     block = triton.next_power_of_2(max(n, 1))
     y = torch.empty(n, device=x.device, dtype=out)
-    _f2x_kernel[(1,)](x.contiguous(), y, n, frac_bits, BLOCK=block, OUT=_TL[out])
+    _flp2fxp_kernel[(1,)](x.contiguous(), y, n, frac_bits, BLOCK=block, OUT=_TL[out])
     return y.view_as(x)
 
 
-def x2f(x: torch.Tensor, frac_bits: tl.constexpr, out: torch.dtype) -> torch.Tensor:
+def fxp2flp(x: torch.Tensor, frac_bits: tl.constexpr, out: torch.dtype) -> torch.Tensor:
     n = x.numel()
     block = triton.next_power_of_2(max(n, 1))
     y = torch.empty(n, device=x.device, dtype=out)
-    _x2f_kernel[(1,)](x.contiguous(), y, n, frac_bits, BLOCK=block, OUT=_TL[out])
+    _fxp2flp_kernel[(1,)](x.contiguous(), y, n, frac_bits, BLOCK=block, OUT=_TL[out])
     return y.view_as(x)
 
 

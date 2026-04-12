@@ -45,7 +45,7 @@ def _run_rms_norm_kernel(
     y = torch.empty_like(x)
     block = triton.next_power_of_2(max(hidden, 1))
 
-    rms_norm.rms_norm_fp_kernel[(batch,)](
+    rms_norm.rms_norm_fxp_kernel[(batch,)](
         x,
         w,
         y,

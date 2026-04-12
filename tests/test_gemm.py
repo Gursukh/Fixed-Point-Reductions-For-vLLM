@@ -25,7 +25,7 @@ def _run_gemm_fp_kernel(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
     grid = (triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),)
 
-    gemm.gemm_fp_kernel[grid](
+    gemm.gemm_fxp[grid](
         a,
         b,
         c,
