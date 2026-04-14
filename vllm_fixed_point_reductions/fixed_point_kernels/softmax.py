@@ -16,36 +16,40 @@ def log_softmax_fxp_kernel(
     BLOCK_N: tl.constexpr,
     FXP_DTYPE: tl.constexpr,
 ):
-    row = tl.program_id(0)
-    x_row = X_ptr + row * stride_xm
-    y_row = Y_ptr + row * stride_ym
+    row_id = tl.program_id(0)
+    x_row_ptr = X_ptr + row_id * stride_xm
+    y_row_ptr = Y_ptr + row_id * stride_ym
 
-    m = -float("inf")
-    for start in range(0, N, BLOCK_N):
-        offs = start + tl.arange(0, BLOCK_N)
-        mask = offs < N
-        x = tl.load(x_row + offs, mask=mask, other=-float("inf")).to(tl.float16)
-        m = tl.maximum(m, tl.max(x, axis=0).to(tl.float32))
+    row_max = -float("inf")
+    for block_start in range(0, N, BLOCK_N):
+        col_offs = block_start + tl.arange(0, BLOCK_N)
+        col_mask = col_offs < N
+        x = tl.load(x_row_ptr + col_offs, mask=col_mask, other=-float("inf")).to(
+            tl.float16
+        )
+        row_max = tl.maximum(row_max, tl.max(x, axis=0).to(tl.float32))
 
-    l_fxp = tl.zeros([1], dtype=FXP_DTYPE)
-    for start in range(0, N, BLOCK_N):
-        offs = start + tl.arange(0, BLOCK_N)
-        mask = offs < N
-        x = tl.load(x_row + offs, mask=mask, other=-float("inf")).to(tl.float16)
-        p = tl.exp(x.to(tl.float32) - m)
-        p = tl.where(mask, p, 0.0)
-        p_fxp = float_to_fixed(p, FRAC_BITS, FXP_DTYPE)
-        l_fxp += tl.sum(p_fxp, axis=0)
+    exp_sum_fxp = tl.zeros([1], dtype=FXP_DTYPE)
+    for block_start in range(0, N, BLOCK_N):
+        col_offs = block_start + tl.arange(0, BLOCK_N)
+        col_mask = col_offs < N
+        x = tl.load(x_row_ptr + col_offs, mask=col_mask, other=-float("inf")).to(
+            tl.float16
+        )
+        exp_shifted = tl.exp(x.to(tl.float32) - row_max)
+        exp_shifted = tl.where(col_mask, exp_shifted, 0.0)
+        exp_shifted_fxp = float_to_fixed(exp_shifted, FRAC_BITS, FXP_DTYPE)
+        exp_sum_fxp += tl.sum(exp_shifted_fxp, axis=0)
 
-    l = fixed_to_float(l_fxp, FRAC_BITS, tl.float32)
-    log_l = tl.log(l)
+    exp_sum = fixed_to_float(exp_sum_fxp, FRAC_BITS, tl.float32)
+    log_sum = tl.log(exp_sum)
 
-    for start in range(0, N, BLOCK_N):
-        offs = start + tl.arange(0, BLOCK_N)
-        mask = offs < N
-        x = tl.load(x_row + offs, mask=mask, other=0.0).to(tl.float16)
-        y = (x.to(tl.float32) - m) - log_l
-        tl.store(y_row + offs, y, mask=mask)
+    for block_start in range(0, N, BLOCK_N):
+        col_offs = block_start + tl.arange(0, BLOCK_N)
+        col_mask = col_offs < N
+        x = tl.load(x_row_ptr + col_offs, mask=col_mask, other=0.0).to(tl.float16)
+        y = (x.to(tl.float32) - row_max) - log_sum
+        tl.store(y_row_ptr + col_offs, y, mask=col_mask)
 
 
 def log_softmax_fxp(

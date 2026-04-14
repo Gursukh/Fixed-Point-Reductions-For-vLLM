@@ -7,6 +7,7 @@ from .fixed_point import (
     fixed_to_float,
 )
 
+
 @triton.jit
 def gemm_fxp_kernel(
     a_row_ptrs,
@@ -190,7 +191,7 @@ def launch_gemm_fxp(
     frac_bits: int,
     fxp_dtype,
 ) -> torch.Tensor:
-    
+
     assert a.is_cuda and b.is_cuda
     assert a.ndim == 2 and b.ndim == 2
     assert a.shape[1] == b.shape[0]
@@ -205,7 +206,7 @@ def launch_gemm_fxp(
     BLOCK_M = 64
     BLOCK_N = 64
     BLOCK_K = triton.next_power_of_2(max(K, 1))
-    D_CHUNK = 32  
+    D_CHUNK = 32
 
     grid = (triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),)
 

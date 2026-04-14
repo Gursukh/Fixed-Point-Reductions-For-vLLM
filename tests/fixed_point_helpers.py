@@ -41,19 +41,27 @@ _TL = {
 }
 
 
-def float_to_fixed(x: torch.Tensor, frac_bits: tl.constexpr, out: torch.dtype) -> torch.Tensor:
+def float_to_fixed(
+    x: torch.Tensor, frac_bits: tl.constexpr, out: torch.dtype
+) -> torch.Tensor:
     n = x.numel()
     block = triton.next_power_of_2(max(n, 1))
     y = torch.empty(n, device=x.device, dtype=out)
-    _float_to_fixed_kernel[(1,)](x.contiguous(), y, n, frac_bits, BLOCK=block, OUT=_TL[out])
+    _float_to_fixed_kernel[(1,)](
+        x.contiguous(), y, n, frac_bits, BLOCK=block, OUT=_TL[out]
+    )
     return y.view_as(x)
 
 
-def fixed_to_float(x: torch.Tensor, frac_bits: tl.constexpr, out: torch.dtype) -> torch.Tensor:
+def fixed_to_float(
+    x: torch.Tensor, frac_bits: tl.constexpr, out: torch.dtype
+) -> torch.Tensor:
     n = x.numel()
     block = triton.next_power_of_2(max(n, 1))
     y = torch.empty(n, device=x.device, dtype=out)
-    _fixed_to_float_kernel[(1,)](x.contiguous(), y, n, frac_bits, BLOCK=block, OUT=_TL[out])
+    _fixed_to_float_kernel[(1,)](
+        x.contiguous(), y, n, frac_bits, BLOCK=block, OUT=_TL[out]
+    )
     return y.view_as(x)
 
 

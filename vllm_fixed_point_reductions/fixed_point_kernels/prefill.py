@@ -363,7 +363,7 @@ def context_attention_fwd_fxp_paged(
     block_n: int = 16,
     d_chunk: int = 16,
 ):
-    
+
     Lq, Lk = q.shape[-1], key_cache.shape[-1]
     assert Lq == Lk, "head_dim mismatch between q and key_cache"
     sm_scale = 1.0 / (Lq**0.5) if softmax_scale is None else softmax_scale

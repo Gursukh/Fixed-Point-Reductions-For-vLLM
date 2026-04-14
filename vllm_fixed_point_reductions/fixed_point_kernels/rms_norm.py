@@ -29,7 +29,9 @@ def rms_norm_fxp_kernel(
 
     x_sq = x * x
 
-    x_sq_fxp = float_to_fixed(x_sq, fractional_bit_width=FRAC_BITS, fixed_point_type=FXP_DTYPE)
+    x_sq_fxp = float_to_fixed(
+        x_sq, fractional_bit_width=FRAC_BITS, fixed_point_type=FXP_DTYPE
+    )
     sum_fxp = tl.sum(x_sq_fxp, axis=0)
     sum_float = fixed_to_float(
         sum_fxp, fractional_bit_width=FRAC_BITS, floating_point_type=tl.float32

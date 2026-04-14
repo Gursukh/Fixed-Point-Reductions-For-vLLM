@@ -5,7 +5,7 @@ RCP_LN2 = 1.4426950408889634
 
 
 def fixed_tl_dtype(int_bits: int):
-    
+
     if int_bits == 16:
         return tl.int16
     if int_bits == 32:

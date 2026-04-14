@@ -167,9 +167,9 @@ def test_decode_correctness(batch, seq_len, num_heads, num_kv_heads, head_dim):
     got, _ = _run_decode_kernel(q, k_buf, v_buf, req_to_token, b_seq_len)
     ref = _ref_decode_attention(q, k_buf, v_buf, req_to_token, b_seq_len)
 
-    assert torch.allclose(
-        got, ref, atol=5e-2, rtol=5e-2
-    ), f"max error = {(got - ref).abs().max().item()}"
+    assert torch.allclose(got, ref, atol=5e-2, rtol=5e-2), (
+        f"max error = {(got - ref).abs().max().item()}"
+    )
 
 
 @requires_cuda
@@ -187,9 +187,9 @@ def test_decode_variable_seq_lens():
     got, _ = _run_decode_kernel(q, k_buf, v_buf, req_to_token, b_seq_len)
     ref = _ref_decode_attention(q, k_buf, v_buf, req_to_token, b_seq_len)
 
-    assert torch.allclose(
-        got, ref, atol=5e-2, rtol=5e-2
-    ), f"max error = {(got - ref).abs().max().item()}"
+    assert torch.allclose(got, ref, atol=5e-2, rtol=5e-2), (
+        f"max error = {(got - ref).abs().max().item()}"
+    )
 
 
 @requires_cuda
@@ -208,9 +208,9 @@ def test_decode_single_token_seq():
     )
     ref = _ref_decode_attention(q, k_buf, v_buf, req_to_token, b_seq_len)
 
-    assert torch.allclose(
-        got, ref, atol=1e-3
-    ), f"max error = {(got - ref).abs().max().item()}"
+    assert torch.allclose(got, ref, atol=1e-3), (
+        f"max error = {(got - ref).abs().max().item()}"
+    )
 
 
 @requires_cuda
@@ -244,10 +244,9 @@ def test_decode_paged_kv():
         page_size=page_size,
     )
 
-    assert torch.allclose(
-        got, ref, atol=5e-2, rtol=5e-2
-    ), f"max error = {(got - ref).abs().max().item()}"
-
+    assert torch.allclose(got, ref, atol=5e-2, rtol=5e-2), (
+        f"max error = {(got - ref).abs().max().item()}"
+    )
 
 
 def _ordered_float_decode_attention_row(
@@ -323,9 +322,9 @@ def test_fp16_decode_attention_is_order_dependent():
         q_row, k_rows[perm], v_rows[perm], sm_scale
     )
 
-    assert not torch.equal(
-        out_fwd, out_perm
-    ), "fp16 attention should differ with permuted KV order"
+    assert not torch.equal(out_fwd, out_perm), (
+        "fp16 attention should differ with permuted KV order"
+    )
 
 
 @requires_cuda
@@ -372,7 +371,7 @@ def test_decode_kv_permutation_invariance():
     perm = torch.randperm(seq_len, device="cuda")
     k_perm = k_buffer[perm]
     v_perm = v_buffer[perm]
-    
+
     inv_perm = torch.empty_like(perm)
     inv_perm[perm] = torch.arange(seq_len, device="cuda", dtype=perm.dtype)
     req_to_token_perm = inv_perm.unsqueeze(0)
@@ -482,6 +481,6 @@ def test_decode_deterministic_across_runs():
         results.append(o)
 
     for r in results[1:]:
-        assert torch.equal(
-            results[0], r
-        ), f"Non-deterministic: max diff = {(results[0] - r).abs().max().item()}"
+        assert torch.equal(results[0], r), (
+            f"Non-deterministic: max diff = {(results[0] - r).abs().max().item()}"
+        )

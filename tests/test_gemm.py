@@ -77,9 +77,9 @@ def test_gemm_fixed_point_correctness(M, N, K):
     got = _run_gemm_fp_kernel(a, b)
     ref = torch.matmul(a, b)
 
-    assert torch.allclose(
-        got, ref, atol=5e-4, rtol=5e-4
-    ), f"max error = {(got - ref).abs().max().item()}"
+    assert torch.allclose(got, ref, atol=5e-4, rtol=5e-4), (
+        f"max error = {(got - ref).abs().max().item()}"
+    )
 
 
 @requires_cuda
@@ -93,9 +93,9 @@ def test_gemm_matches_torch():
     got = _run_gemm_fp_kernel(a, b)
     ref = torch.matmul(a, b)
 
-    assert torch.allclose(
-        got, ref, atol=5e-4, rtol=5e-4
-    ), f"max error = {(got - ref).abs().max().item()}"
+    assert torch.allclose(got, ref, atol=5e-4, rtol=5e-4), (
+        f"max error = {(got - ref).abs().max().item()}"
+    )
 
 
 @requires_cuda
@@ -162,9 +162,9 @@ def test_gemm_associativity_fixed_vs_float16():
     a_row_rev = list(reversed(a_row))
     b_col_rev = list(reversed(b_col))
     fp16_rev = _ordered_fp16_dot([a_row_rev], [b_col_rev])
-    assert (
-        fp16_fwd.item() != fp16_rev.item()
-    ), "fp16 sums should differ with reversed order"
+    assert fp16_fwd.item() != fp16_rev.item(), (
+        "fp16 sums should differ with reversed order"
+    )
 
     a_fwd = torch.tensor([a_row], device="cuda", dtype=torch.float32)
     b_fwd = torch.tensor([[v] for v in b_col], device="cuda", dtype=torch.float32)
@@ -176,9 +176,9 @@ def test_gemm_associativity_fixed_vs_float16():
     c_fwd = _run_gemm_fp_kernel(a_fwd, b_fwd)
     c_rev = _run_gemm_fp_kernel(a_rev, b_rev)
 
-    assert torch.equal(
-        c_fwd, c_rev
-    ), f"Fixed-point GEMM should be order-invariant, got {c_fwd.item()} vs {c_rev.item()}"
+    assert torch.equal(c_fwd, c_rev), (
+        f"Fixed-point GEMM should be order-invariant, got {c_fwd.item()} vs {c_rev.item()}"
+    )
 
 
 @requires_cuda
@@ -204,9 +204,9 @@ def test_gemm_element_permutation_invariance():
     c_orig = _run_gemm_fp_kernel(a, b)
     c_perm = _run_gemm_fp_kernel(a_perm, b_perm)
 
-    assert torch.equal(
-        c_orig, c_perm
-    ), f"max diff = {(c_orig - c_perm).abs().max().item()}"
+    assert torch.equal(c_orig, c_perm), (
+        f"max diff = {(c_orig - c_perm).abs().max().item()}"
+    )
 
 
 @requires_cuda

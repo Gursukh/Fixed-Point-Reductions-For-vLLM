@@ -43,7 +43,6 @@ def _launch_rms_norm_fxp(
 @CustomOp.register("rms_norm")
 @CustomOp.register_oot(name="RMSNorm")
 class DeterministicRMSNorm(RMSNorm):
-
     def _get_weight_fp32(self) -> torch.Tensor:
         cached = getattr(self, "_weight_fp32", None)
         if cached is not None:

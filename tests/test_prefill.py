@@ -1,5 +1,3 @@
-import time
-
 import pytest
 import torch
 
@@ -99,9 +97,9 @@ def test_prefill_correctness_causal(batch, seq_len, num_heads, num_kv_heads, hea
         q, k, v, b_start_loc, b_seq_len, is_causal=True, sm_scale=sm_scale
     )
 
-    assert torch.allclose(
-        o, ref, atol=5e-2, rtol=5e-2
-    ), f"max error = {(o - ref).abs().max().item()}"
+    assert torch.allclose(o, ref, atol=5e-2, rtol=5e-2), (
+        f"max error = {(o - ref).abs().max().item()}"
+    )
 
 
 @requires_cuda
@@ -125,9 +123,9 @@ def test_prefill_correctness_non_causal():
         q, k, v, b_start_loc, b_seq_len, is_causal=False, sm_scale=sm_scale
     )
 
-    assert torch.allclose(
-        o, ref, atol=5e-2, rtol=5e-2
-    ), f"max error = {(o - ref).abs().max().item()}"
+    assert torch.allclose(o, ref, atol=5e-2, rtol=5e-2), (
+        f"max error = {(o - ref).abs().max().item()}"
+    )
 
 
 @requires_cuda
@@ -152,9 +150,9 @@ def test_prefill_variable_seq_lens():
         q, k, v, b_start_loc, b_seq_len, is_causal=True, sm_scale=sm_scale
     )
 
-    assert torch.allclose(
-        o, ref, atol=5e-2, rtol=5e-2
-    ), f"max error = {(o - ref).abs().max().item()}"
+    assert torch.allclose(o, ref, atol=5e-2, rtol=5e-2), (
+        f"max error = {(o - ref).abs().max().item()}"
+    )
 
 
 def _float_attention_row(
@@ -375,6 +373,6 @@ def test_prefill_deterministic_across_runs():
         results.append(o)
 
     for r in results[1:]:
-        assert torch.equal(
-            results[0], r
-        ), f"Non-deterministic: max diff = {(results[0] - r).abs().max().item()}"
+        assert torch.equal(results[0], r), (
+            f"Non-deterministic: max diff = {(results[0] - r).abs().max().item()}"
+        )

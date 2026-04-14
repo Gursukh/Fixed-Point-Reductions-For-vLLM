@@ -82,7 +82,9 @@ def test_float_roundtrip_rounding():
     x = torch.tensor(
         [0.03, 0.1, 0.2, -0.03, -0.1, 0.7777], device="cuda", dtype=torch.float32
     )
-    back = fixed_to_float(float_to_fixed(x, frac_bits, torch.int32), frac_bits, torch.float32)
+    back = fixed_to_float(
+        float_to_fixed(x, frac_bits, torch.int32), frac_bits, torch.float32
+    )
 
     # result must land on the grid
     grid_err = (back / step).round() * step - back

@@ -27,5 +27,3 @@ def deterministic_log_softmax(
     log_sum_exp = sum_exp.log()
 
     return (shifted - log_sum_exp).to(orig_dtype)
-
-

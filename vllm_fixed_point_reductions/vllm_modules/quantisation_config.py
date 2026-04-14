@@ -23,7 +23,6 @@ logger = logging.getLogger("vllm_fixed_point_reductions")
 
 @register_quantization_config("fixed_point_det")
 class FixedPointConfig(QuantizationConfig):
-
     def __init__(self, frac_bits: int = DEFAULT_FRAC_BITS) -> None:
         self.frac_bits = frac_bits
 
@@ -65,7 +64,6 @@ class FixedPointConfig(QuantizationConfig):
 
 
 class FixedPointLinearMethod(QuantizeMethodBase):
-    
     def __init__(self, config: FixedPointConfig) -> None:
         self.config = config
 
@@ -94,7 +92,7 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         layer.register_parameter("weight", weight)
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        
+
         with torch.no_grad():
             w_fp32_t = layer.weight.data.to(torch.float32).t().contiguous()
         layer.weight_fp32_t = w_fp32_t

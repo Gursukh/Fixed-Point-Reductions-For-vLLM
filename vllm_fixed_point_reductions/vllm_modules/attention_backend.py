@@ -24,7 +24,7 @@ _flash_builder_cls: Optional[Type[AttentionMetadataBuilder]] = None
 
 
 def _lazy_import_flash_meta() -> None:
-    
+
     global _flash_meta_cls, _flash_builder_cls
     if _flash_meta_cls is None:
         from vllm.v1.attention.backends.flash_attn import (
@@ -35,8 +35,8 @@ def _lazy_import_flash_meta() -> None:
         _flash_meta_cls = FlashAttentionMetadata
         _flash_builder_cls = FlashAttentionMetadataBuilder
 
-class DeterministicAttentionBackend(TritonAttentionBackend):
 
+class DeterministicAttentionBackend(TritonAttentionBackend):
     accept_output_buffer: bool = True
 
     @staticmethod
@@ -81,7 +81,6 @@ class DeterministicAttentionBackend(TritonAttentionBackend):
 
 
 class DeterministicAttentionImpl(AttentionImpl):
-
     def __init__(
         self,
         num_heads: int,
@@ -186,7 +185,7 @@ class DeterministicAttentionImpl(AttentionImpl):
     def _split_prefill_decode(
         attn_metadata: AttentionMetadata, num_tokens: int
     ) -> tuple[int, int, int]:
-        
+
         max_query_len = int(attn_metadata.max_query_len)
         num_reqs = int(attn_metadata.query_start_loc.numel() - 1)
         if max_query_len > 1:
@@ -201,7 +200,7 @@ class DeterministicAttentionImpl(AttentionImpl):
         kv_cache: torch.Tensor,
         slot_mapping: torch.Tensor,
     ) -> None:
-        
+
         if self.attn_type in (AttentionType.ENCODER_ONLY, AttentionType.ENCODER):
             return
 
