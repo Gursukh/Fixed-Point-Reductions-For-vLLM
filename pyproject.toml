@@ -1,5 +1,5 @@
 [project]
-name = "vllm_fixed_point_reductions"
+name = "fxpr_vllm"
 version = "0.1.0"
 description = "Deterministic inference for vLLM via fixed-point reductions"
 readme = "README.md"
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.entry-points."vllm.general_plugins"]
-fixed_point_reductions = "vllm_fixed_point_reductions.register:register"
+fixed_point_reductions = "fxpr_vllm.register:register"
 
 [project.optional-dependencies]
 dev = [
@@ -24,7 +24,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = [
-    "vllm_fixed_point_reductions",
-    "vllm_fixed_point_reductions.fixed_point_kernels",
-    "vllm_fixed_point_reductions.vllm_modules",
+    "fxpr_vllm",
+    "fxpr_vllm.fixed_point_kernels",
+    "fxpr_vllm.vllm_modules",
 ]

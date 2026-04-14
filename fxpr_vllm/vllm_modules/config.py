@@ -7,7 +7,7 @@ DEFAULT_FRAC_BITS = 16
 DEFAULT_NUM_KV_SPLITS = 8
 DEFAULT_FXP_INT_BITS = 32
 
-logger = logging.getLogger("vllm_fixed_point_reductions")
+logger = logging.getLogger("fxpr_vllm")
 
 
 def _env_int(name: str, default: int) -> int:

@@ -1,7 +1,7 @@
 import torch
 import triton
 import triton.language as tl
-from vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
+from fxpr_vllm.fixed_point_kernels.fixed_point import (
     fixed_to_float,
     float_to_fixed,
     RCP_LN2,

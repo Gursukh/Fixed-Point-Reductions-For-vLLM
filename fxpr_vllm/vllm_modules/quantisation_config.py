@@ -18,7 +18,7 @@ from ..fixed_point_kernels.fixed_point import fixed_tl_dtype
 from ..fixed_point_kernels.gemm import launch_gemm_fxp
 from .config import DEFAULT_FRAC_BITS, get_runtime_config
 
-logger = logging.getLogger("vllm_fixed_point_reductions")
+logger = logging.getLogger("fxpr_vllm")
 
 
 @register_quantization_config("fixed_point_det")

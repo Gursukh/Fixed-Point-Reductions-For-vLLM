@@ -4,7 +4,7 @@ import triton
 import triton.language as tl
 
 from tests.fixed_point_helpers import requires_cuda
-from vllm_fixed_point_reductions.fixed_point_kernels import rms_norm
+from fxpr_vllm.fixed_point_kernels import rms_norm
 
 
 @triton.jit

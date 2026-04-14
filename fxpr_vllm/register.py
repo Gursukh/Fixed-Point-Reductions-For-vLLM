@@ -3,7 +3,7 @@ import sys
 
 from .vllm_modules.config import get_runtime_config
 
-logger = logging.getLogger("vllm_fixed_point_reductions")
+logger = logging.getLogger("fxpr_vllm")
 
 
 _registered = False
