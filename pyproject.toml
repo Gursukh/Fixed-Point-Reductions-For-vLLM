@@ -10,6 +10,9 @@ dependencies = [
     "torch",
 ]
 
+[project.entry-points."vllm.general_plugins"]
+fixed_point_reductions = "triton_vllm_fixed_point_reductions.vllm_modules.plugin:register"
+
 [project.optional-dependencies]
 dev = [
     "pytest",

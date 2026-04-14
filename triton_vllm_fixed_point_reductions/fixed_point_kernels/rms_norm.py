@@ -27,14 +27,15 @@ def rms_norm_fxp_kernel(
 
     x_sq = x * x
 
-    # Cast x^2 to fixed-point, reduce, then cast back to float for the reciprocal sqrt
-    x_sq_fxp = flp_2_fxp(x_sq, fractional_bit_width=16, fixed_point_type=tl.int32)
+    # Use int64 accumulation to avoid overflow at large hidden sizes.
+    x_sq_fxp = flp_2_fxp(x_sq, fractional_bit_width=16, fixed_point_type=tl.int64)
     sum_fxp = tl.sum(x_sq_fxp, axis=0)
     sum_float = fxp_to_flp(
         sum_fxp, fractional_bit_width=16, floating_point_type=tl.float32
     )
 
-    rrms = 1.0 / tl.sqrt(sum_float / hidden_size + eps)
+    mean_sq = tl.maximum(sum_float / hidden_size, 0.0)
+    rrms = 1.0 / tl.sqrt(mean_sq + eps)
 
     y = x * w * rrms
     tl.store(Y_ptr + row * stride_x + cols, y, mask=mask)

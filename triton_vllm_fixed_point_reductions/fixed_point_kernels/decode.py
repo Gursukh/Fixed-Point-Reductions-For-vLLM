@@ -135,7 +135,7 @@ def decode_stage1_fp_kernel(
     )
     tl.store(
         Att_Out + offs_mid_o,
-        acc / e_sum[:, None],
+        acc / tl.maximum(e_sum, 1.0e-6)[:, None],
         mask=(mask_h[:, None]) & (mask_dv[None, :]),
     )
 
@@ -145,7 +145,7 @@ def decode_stage1_fp_kernel(
         + split_kv_id * stride_mid_os
         + Lv
     )
-    tl.store(Att_Out + offs_mid_o_1, e_max + tl.log(e_sum), mask=mask_h)
+    tl.store(Att_Out + offs_mid_o_1, e_max + tl.log(tl.maximum(e_sum, 1.0e-6)), mask=mask_h)
 
 
 @triton.jit
@@ -202,10 +202,10 @@ def decode_stage2_fp_kernel(
 
     tl.store(
         o + cur_batch * stride_obs + cur_head * stride_oh + offs_d,
-        acc / e_sum,
+        acc / tl.maximum(e_sum, 1.0e-6),
         mask=mask_d,
     )
-    tl.store(lse + cur_batch * stride_lse_bs + cur_head, e_max + tl.log(e_sum))
+    tl.store(lse + cur_batch * stride_lse_bs + cur_head, e_max + tl.log(tl.maximum(e_sum, 1.0e-6)))
 
 
 def decode_attention_fwd_fp_kernel(

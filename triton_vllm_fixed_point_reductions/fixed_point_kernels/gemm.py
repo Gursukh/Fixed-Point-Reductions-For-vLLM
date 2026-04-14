@@ -22,14 +22,13 @@ def gemm_fxp_kernel(
     Lk,
     ROWS: tl.constexpr,
     COLS: tl.constexpr,
-    K: tl.constexpr,
     D_CHUNK: tl.constexpr,
     FRAC_BITS: tl.constexpr,
     RETURN_FXP: tl.constexpr = False,
 ):
     acc = tl.zeros([ROWS, COLS], dtype=tl.int32)
 
-    for k_start in tl.static_range(0, K, D_CHUNK):
+    for k_start in tl.range(0, Lk, D_CHUNK):
         k_offs = k_start + tl.arange(0, D_CHUNK)
         k_valid = k_offs < Lk
 
@@ -117,7 +116,6 @@ def gemm_fxp(
         Lk=K,
         ROWS=BLOCK_SIZE_M,
         COLS=BLOCK_SIZE_N,
-        K=BLOCK_SIZE_K,
         D_CHUNK=BLOCK_SIZE_K,
         FRAC_BITS=TEMP_FRACTIONAL_BITS,
     )

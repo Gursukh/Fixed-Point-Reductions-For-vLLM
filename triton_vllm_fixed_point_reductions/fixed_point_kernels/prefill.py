@@ -82,7 +82,6 @@ def prefill_fxp_kernel(
             Lk=Lk,
             ROWS=BLOCK_M,
             COLS=BLOCK_N,
-            K=BLOCK_DMODEL,
             D_CHUNK=D_CHUNK,
             FRAC_BITS=FRAC_BITS,
         )
@@ -116,7 +115,6 @@ def prefill_fxp_kernel(
             Lk=Lk,
             ROWS=BLOCK_M,
             COLS=BLOCK_N,
-            K=BLOCK_DMODEL,
             D_CHUNK=D_CHUNK,
             FRAC_BITS=FRAC_BITS,
         )
@@ -143,7 +141,8 @@ def prefill_fxp_kernel(
 
     l_i = fxp_to_flp(l_i_fxp, FRAC_BITS, tl.float32)
     acc = fxp_to_flp(acc_fxp, FRAC_BITS, tl.float32)
-    acc = acc / l_i[:, None]
+    l_i_safe = tl.maximum(l_i, 1.0e-6)
+    acc = acc / l_i_safe[:, None]
 
     off_o = (
         (cur_batch_start + offs_m[:, None]) * stride_obs
