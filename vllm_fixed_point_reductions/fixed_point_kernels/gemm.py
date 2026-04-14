@@ -3,8 +3,8 @@ import triton
 import triton.language as tl
 
 from .fixed_point import (
-    flp_2_fxp,
-    fxp_to_flp,
+    float_to_fixed,
+    fixed_to_float,
 )
 
 @triton.jit
@@ -41,15 +41,15 @@ def gemm_fxp_kernel(
         ).to(tl.float16)
 
         prod = a[:, :, None] * b[None, :, :]
-        acc += tl.sum(flp_2_fxp(prod, FRAC_BITS, FXP_DTYPE), axis=1)
+        acc += tl.sum(float_to_fixed(prod, FRAC_BITS, FXP_DTYPE), axis=1)
 
-    return fxp_to_flp(acc, FRAC_BITS, tl.float32)
+    return fixed_to_float(acc, FRAC_BITS, tl.float32)
 
 
 @triton.jit
 def dot_chunk_fxp(a, b, FRAC_BITS: tl.constexpr, FXP_DTYPE: tl.constexpr):
     prod = a[:, :, None] * b[None, :, :]
-    return tl.sum(flp_2_fxp(prod, FRAC_BITS, FXP_DTYPE), axis=1)
+    return tl.sum(float_to_fixed(prod, FRAC_BITS, FXP_DTYPE), axis=1)
 
 
 @triton.jit
@@ -175,9 +175,9 @@ def _gemm_fxp_tiled_kernel(
         ).to(tl.float16)
 
         partial = tl.dot(a, b, out_dtype=tl.float32, allow_tf32=False)
-        acc += flp_2_fxp(partial, FRAC_BITS, FXP_DTYPE)
+        acc += float_to_fixed(partial, FRAC_BITS, FXP_DTYPE)
 
-    c = fxp_to_flp(acc, FRAC_BITS, tl.float32)
+    c = fixed_to_float(acc, FRAC_BITS, tl.float32)
 
     c_ptrs = c_ptr + stride_cm * offs_m[:, None] + stride_cn * offs_n[None, :]
     c_mask = row_mask[:, None] & col_mask[None, :]

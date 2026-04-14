@@ -4,7 +4,7 @@ import triton.language as tl
 RCP_LN2 = 1.4426950408889634
 
 
-def fxp_tl_dtype(int_bits: int):
+def fixed_tl_dtype(int_bits: int):
     
     if int_bits == 16:
         return tl.int16
@@ -16,7 +16,7 @@ def fxp_tl_dtype(int_bits: int):
 
 
 @triton.jit
-def flp_2_fxp(
+def float_to_fixed(
     x: tl.tensor, fractional_bit_width: tl.constexpr, fixed_point_type: tl.constexpr
 ):
 
@@ -47,7 +47,7 @@ def flp_2_fxp(
 
 
 @triton.jit
-def fxp_to_flp(
+def fixed_to_float(
     x: tl.tensor, fractional_bit_width: tl.constexpr, floating_point_type: tl.constexpr
 ):
 

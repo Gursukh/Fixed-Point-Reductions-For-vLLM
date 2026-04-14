@@ -17,7 +17,7 @@ from ..fixed_point_kernels.prefill import context_attention_fwd_fxp_paged
 from ..fixed_point_kernels.decode import decode_attention_fwd_fp_kernel
 from ..register import get_runtime_config
 
-logger = logging.getLogger("vllm_deterministic")
+logger = logging.getLogger("vllm_fixed_point_reductions")
 
 _flash_meta_cls: Optional[Type[AttentionMetadata]] = None
 _flash_builder_cls: Optional[Type[AttentionMetadataBuilder]] = None
@@ -34,7 +34,6 @@ def _lazy_import_flash_meta() -> None:
 
         _flash_meta_cls = FlashAttentionMetadata
         _flash_builder_cls = FlashAttentionMetadataBuilder
-
 
 class DeterministicAttentionBackend(TritonAttentionBackend):
 

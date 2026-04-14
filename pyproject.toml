@@ -1,5 +1,5 @@
 [project]
-name = "det-vllm"
+name = "vllm_fixed_point_reductions"
 version = "0.1.0"
 description = "Deterministic inference for vLLM via fixed-point reductions"
 readme = "README.md"

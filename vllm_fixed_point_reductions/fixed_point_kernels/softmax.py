@@ -2,7 +2,7 @@ import torch
 import triton
 import triton.language as tl
 
-from .fixed_point import flp_2_fxp, fxp_to_flp
+from .fixed_point import float_to_fixed, fixed_to_float
 
 
 @triton.jit
@@ -34,10 +34,10 @@ def log_softmax_fxp_kernel(
         x = tl.load(x_row + offs, mask=mask, other=-float("inf")).to(tl.float16)
         p = tl.exp(x.to(tl.float32) - m)
         p = tl.where(mask, p, 0.0)
-        p_fxp = flp_2_fxp(p, FRAC_BITS, FXP_DTYPE)
+        p_fxp = float_to_fixed(p, FRAC_BITS, FXP_DTYPE)
         l_fxp += tl.sum(p_fxp, axis=0)
 
-    l = fxp_to_flp(l_fxp, FRAC_BITS, tl.float32)
+    l = fixed_to_float(l_fxp, FRAC_BITS, tl.float32)
     log_l = tl.log(l)
 
     for start in range(0, N, BLOCK_N):

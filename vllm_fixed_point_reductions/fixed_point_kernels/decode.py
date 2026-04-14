@@ -2,7 +2,7 @@ import torch
 import triton
 import triton.language as tl
 from vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
-    fxp_to_flp,
+    fixed_to_float,
 )
 from .gemm import dot_chunk_fxp
 
@@ -94,7 +94,7 @@ def decode_stage1_fp_kernel(
                 other=0.0,
             ).to(tl.float16)
             qk_fxp = dot_chunk_fxp(q, k, FRAC_BITS, FXP_DTYPE)
-            qk = fxp_to_flp(qk_fxp, FRAC_BITS, tl.float32)
+            qk = fixed_to_float(qk_fxp, FRAC_BITS, tl.float32)
             qk *= sm_scale
 
             qk = tl.where(
@@ -119,7 +119,7 @@ def decode_stage1_fp_kernel(
 
             # deterministic P·V
             pv_fxp = dot_chunk_fxp(p.to(tl.float16), v, FRAC_BITS, FXP_DTYPE)
-            acc += fxp_to_flp(pv_fxp, FRAC_BITS, tl.float32)
+            acc += fixed_to_float(pv_fxp, FRAC_BITS, tl.float32)
 
             e_sum = e_sum * re_scale + tl.sum(p, 1)
             e_max = n_e_max

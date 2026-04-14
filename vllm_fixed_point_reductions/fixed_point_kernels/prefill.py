@@ -2,8 +2,8 @@ import torch
 import triton
 import triton.language as tl
 from vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
-    fxp_to_flp,
-    flp_2_fxp,
+    fixed_to_float,
+    float_to_fixed,
     RCP_LN2,
 )
 from .gemm import gemm_fxp_kernel, dot_chunk_fxp
@@ -128,7 +128,7 @@ def prefill_fxp_kernel(
 
         p = tl.math.exp2(qk - m_i[:, None])
 
-        p_fxp = flp_2_fxp(p, FRAC_BITS, FXP_DTYPE)
+        p_fxp = float_to_fixed(p, FRAC_BITS, FXP_DTYPE)
         l_i_fxp += tl.sum(p_fxp, axis=1)
 
         v = tl.load(
@@ -141,8 +141,8 @@ def prefill_fxp_kernel(
 
         acc_fxp += dot_chunk_fxp(p, v, FRAC_BITS, FXP_DTYPE)
 
-    l_i = fxp_to_flp(l_i_fxp, FRAC_BITS, tl.float32)
-    acc = fxp_to_flp(acc_fxp, FRAC_BITS, tl.float32)
+    l_i = fixed_to_float(l_i_fxp, FRAC_BITS, tl.float32)
+    acc = fixed_to_float(acc_fxp, FRAC_BITS, tl.float32)
     l_i_safe = tl.maximum(l_i, 1.0e-6)
     acc = acc / l_i_safe[:, None]
 
@@ -312,7 +312,7 @@ def prefill_fxp_paged_kernel(
 
         p = tl.math.exp2(qk - m_i[:, None])
 
-        p_fxp = flp_2_fxp(p, FRAC_BITS, FXP_DTYPE)
+        p_fxp = float_to_fixed(p, FRAC_BITS, FXP_DTYPE)
         l_i_fxp += tl.sum(p_fxp, axis=1)
 
         v_ptrs = (
@@ -330,8 +330,8 @@ def prefill_fxp_paged_kernel(
 
         acc_fxp += dot_chunk_fxp(p, v, FRAC_BITS, FXP_DTYPE)
 
-    l_i = fxp_to_flp(l_i_fxp, FRAC_BITS, tl.float32)
-    acc = fxp_to_flp(acc_fxp, FRAC_BITS, tl.float32)
+    l_i = fixed_to_float(l_i_fxp, FRAC_BITS, tl.float32)
+    acc = fixed_to_float(acc_fxp, FRAC_BITS, tl.float32)
     l_i_safe = tl.maximum(l_i, 1.0e-6)
     acc = acc / l_i_safe[:, None]
 

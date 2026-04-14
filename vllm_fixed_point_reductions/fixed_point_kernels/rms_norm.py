@@ -2,8 +2,8 @@ import triton
 import triton.language as tl
 
 from vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
-    flp_2_fxp,
-    fxp_to_flp,
+    float_to_fixed,
+    fixed_to_float,
 )
 
 
@@ -29,9 +29,9 @@ def rms_norm_fxp_kernel(
 
     x_sq = x * x
 
-    x_sq_fxp = flp_2_fxp(x_sq, fractional_bit_width=FRAC_BITS, fixed_point_type=FXP_DTYPE)
+    x_sq_fxp = float_to_fixed(x_sq, fractional_bit_width=FRAC_BITS, fixed_point_type=FXP_DTYPE)
     sum_fxp = tl.sum(x_sq_fxp, axis=0)
-    sum_float = fxp_to_flp(
+    sum_float = fixed_to_float(
         sum_fxp, fractional_bit_width=FRAC_BITS, floating_point_type=tl.float32
     )
 

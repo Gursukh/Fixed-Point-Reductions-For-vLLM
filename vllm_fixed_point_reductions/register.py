@@ -8,7 +8,7 @@ DEFAULT_FRAC_BITS = 16
 DEFAULT_NUM_KV_SPLITS = 8
 DEFAULT_FXP_INT_BITS = 32
 
-logger = logging.getLogger("vllm_deterministic")
+logger = logging.getLogger("vllm_fixed_point_reductions")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -18,9 +18,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        logger.warning(
-            "Ignoring malformed %s=%r; using default %d", name, raw, default
-        )
+        logger.warning("Ignoring malformed %s=%r; using default %d", name, raw, default)
         return default
 
 
@@ -86,18 +84,14 @@ def _register_rms_norm() -> None:
             setattr(mod, "RMSNorm", DeterministicRMSNorm)
             patched_modules += 1
 
-    logger.info(
-        "RMSNorm patched (preloaded_model_modules=%d)", patched_modules
-    )
+    logger.info("RMSNorm patched (preloaded_model_modules=%d)", patched_modules)
 
 
 def _register_quant_config() -> None:
-    # Import triggers the @register_quantization_config decorator.
+
     from .vllm_modules.quantisation_config import FixedPointConfig
 
-    logger.info(
-        "Quant config registered: %s", FixedPointConfig.get_name()
-    )
+    logger.info("Quant config registered: %s", FixedPointConfig.get_name())
 
 
 def _register_attention_backend() -> None:
@@ -142,7 +136,7 @@ def _register_sampler() -> None:
 
 
 def register() -> None:
-    
+
     global _registered
     if _registered:
         return
