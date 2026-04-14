@@ -24,7 +24,12 @@ _flash_builder_cls: Optional[Type[AttentionMetadataBuilder]] = None
 
 
 def _lazy_import_flash_meta() -> None:
+    """Import FlashAttention metadata/builder classes on first use.
 
+    vLLM imports flash_attn lazily to avoid CUDA side effects at module
+    load. We reuse its metadata/builder so our backend plugs into the existing
+    scheduler path without reimplementing them.
+    """
     global _flash_meta_cls, _flash_builder_cls
     if _flash_meta_cls is None:
         from vllm.v1.attention.backends.flash_attn import (
@@ -41,20 +46,24 @@ class DeterministicAttentionBackend(TritonAttentionBackend):
 
     @staticmethod
     def get_name() -> str:
+        """Return the registry key used by VLLM_ATTENTION_BACKEND."""
         return "CUSTOM"
 
     @staticmethod
     def get_impl_cls() -> Type["DeterministicAttentionImpl"]:
+        """Return the attention-impl class that runs deterministic kernels."""
         return DeterministicAttentionImpl
 
     @staticmethod
     def get_metadata_cls() -> Type[AttentionMetadata]:
+        """Return vLLM's :class:`FlashAttentionMetadata` (reused unchanged)."""
         _lazy_import_flash_meta()
         assert _flash_meta_cls is not None
         return _flash_meta_cls
 
     @staticmethod
     def get_builder_cls() -> Type[AttentionMetadataBuilder]:
+        """Return vLLM's flash-attn metadata builder (reused unchanged)."""
         _lazy_import_flash_meta()
         assert _flash_builder_cls is not None
         return _flash_builder_cls
@@ -67,12 +76,32 @@ class DeterministicAttentionBackend(TritonAttentionBackend):
         head_size: int,
         cache_dtype_str: str = "auto",
     ) -> tuple[int, ...]:
+        """Return the on-device KV-cache tensor shape expected by this backend.
+
+        Args:
+            num_blocks:      Total paged blocks allocated to the cache.
+            block_size:      Tokens per paged block.
+            num_kv_heads:    KV head count after tensor-parallel sharding.
+            head_size:       Per-head hidden dimension.
+            cache_dtype_str: vLLM cache dtype spec (unused; shape is dtype-agnostic).
+
+        Returns:
+            (2, num_blocks, block_size, num_kv_heads, head_size) — the leading 2 splits keys (0) and values (1).
+        """
         return (2, num_blocks, block_size, num_kv_heads, head_size)
 
     @staticmethod
     def get_kv_cache_stride_order(
         include_num_layers_dimension: bool = False,
     ) -> tuple[int, ...]:
+        """Return the KV-cache stride order, delegating to vLLM's flash-attn backend.
+
+        Args:
+            include_num_layers_dimension: If True, include the leading layer axis in the permutation.
+
+        Returns:
+            Tuple of axis indices specifying storage order.
+        """
         from vllm.v1.attention.backends.flash_attn import FlashAttentionBackend
 
         return FlashAttentionBackend.get_kv_cache_stride_order(
@@ -95,6 +124,24 @@ class DeterministicAttentionImpl(AttentionImpl):
         attn_type: AttentionType = AttentionType.DECODER,
         **kwargs,
     ) -> None:
+        """Configure a deterministic attention impl for one model layer.
+
+        Args:
+            num_heads:       Query heads after TP sharding.
+            head_size:       Per-head hidden dimension.
+            scale:           Softmax scale (typically 1/sqrt(head_size)).
+            num_kv_heads:    KV heads after TP sharding (equal to num_heads for MHA, smaller for GQA/MQA).
+            alibi_slopes:    Unsupported; must be None.
+            sliding_window:  Unsupported; must be None.
+            kv_cache_dtype:  vLLM cache dtype spec forwarded to the cache writer.
+            blocktable_size: Max blocks per request (unused; kept for API parity).
+            logits_soft_cap: Optional soft-cap, stored but not applied by the current kernels.
+            attn_type:       Layer attention type (decoder / encoder / encoder-only).
+            **kwargs:        Swallowed for forward-compatibility with vLLM.
+
+        Raises:
+            NotImplementedError: If ALiBi or sliding-window is requested.
+        """
         if alibi_slopes is not None:
             raise NotImplementedError("DeterministicAttention does not support ALiBi.")
         if sliding_window is not None:
@@ -130,6 +177,26 @@ class DeterministicAttentionImpl(AttentionImpl):
         output_block_scale: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
+        """Run deterministic attention for one layer on a packed batch.
+
+        Args:
+            layer:              vLLM attention layer (supplies KV scales during caching).
+            query:              (num_tokens, num_heads    * head_size) packed queries.
+            key:                (num_tokens, num_kv_heads * head_size) packed keys.
+            value:              (num_tokens, num_kv_heads * head_size) packed values.
+            kv_cache:           (2, num_blocks, block_size, num_kv_heads, head_size) paged K/V cache.
+            attn_metadata:      Scheduler metadata; None during the vLLM profiling pass (a zeroed output is returned).
+            output:             (num_tokens, num_heads    * head_size) optional pre-allocated output buffer.
+            output_scale:       Unsupported.
+            output_block_scale: Unsupported.
+            **kwargs:           Swallowed for forward-compatibility.
+
+        Returns:
+            (num_tokens, num_heads * head_size) attention output.
+
+        Raises:
+            NotImplementedError: If quantised output scales are requested.
+        """
         if output_scale is not None or output_block_scale is not None:
             raise NotImplementedError(
                 "DeterministicAttention does not support fp8/quantized output scales."
@@ -185,7 +252,15 @@ class DeterministicAttentionImpl(AttentionImpl):
     def _split_prefill_decode(
         attn_metadata: AttentionMetadata, num_tokens: int
     ) -> tuple[int, int, int]:
+        """Classify a packed batch as all-prefill or all-decode.
 
+        Args:
+            attn_metadata: Scheduler metadata for the current step.
+            num_tokens:    Total tokens in the packed batch.
+
+        Returns:
+            (num_prefill_tokens, num_decode_tokens, num_prefill_requests) — exactly one of the first two is non-zero.
+        """
         max_query_len = int(attn_metadata.max_query_len)
         num_reqs = int(attn_metadata.query_start_loc.numel() - 1)
         if max_query_len > 1:
@@ -200,7 +275,15 @@ class DeterministicAttentionImpl(AttentionImpl):
         kv_cache: torch.Tensor,
         slot_mapping: torch.Tensor,
     ) -> None:
+        """Write new K/V tokens into the paged KV cache. No-op for encoder / encoder-only types.
 
+        Args:
+            layer:        Source of _k_scale / _v_scale for optional fp8 cache.
+            key:          (num_tokens, num_kv_heads, head_size) new keys.
+            value:        (num_tokens, num_kv_heads, head_size) new values.
+            kv_cache:     (2, num_blocks, block_size, num_kv_heads, head_size) paged cache.
+            slot_mapping: (num_tokens,) flat slot indices into the cache.
+        """
         if self.attn_type in (AttentionType.ENCODER_ONLY, AttentionType.ENCODER):
             return
 
@@ -228,11 +311,18 @@ class DeterministicAttentionImpl(AttentionImpl):
         attn_metadata: AttentionMetadata,
         num_prefills: int,
     ) -> None:
+        """Run the paged fixed-point prefill kernel and write into output.
+
+        Args:
+            query:         (num_prefill_tokens, num_heads,     head_size) prefill queries.
+            kv_cache:      (2, num_blocks, block_size, num_kv_heads, head_size) paged cache.
+            output:        (num_prefill_tokens, num_heads,     head_size) pre-allocated output.
+            attn_metadata: Scheduler metadata providing seq_lens, query_start_loc and block_table.
+            num_prefills:  Number of prefill requests (leading rows of per-request metadata).
+        """
         seq_lens = attn_metadata.seq_lens[:num_prefills].to(torch.int32)
         if seq_lens.numel() == 0:
             return
-        # query_start_loc has length num_reqs+1; we need the [0, num_prefills] slice
-        # so each request's start AND stop offset is available to the kernel.
         query_start_loc = attn_metadata.query_start_loc[: num_prefills + 1].to(
             torch.int32
         )
@@ -271,6 +361,20 @@ class DeterministicAttentionImpl(AttentionImpl):
         num_prefills: int,
         num_decode: int,
     ) -> None:
+        """Run the paged fixed-point decode kernel and write into output.
+
+        Internally allocates scratch attn_logits of shape
+        (num_decode, num_heads, num_kv_splits, head_dim_v + 1) and lse of shape
+        (num_decode, num_heads) for the split-KV online-softmax reduction.
+
+        Args:
+            query:         (num_decode, num_heads, head_size) decode queries (one token per request).
+            kv_cache:      (2, num_blocks, block_size, num_kv_heads, head_size) paged cache.
+            output:        (num_decode, num_heads, head_size) pre-allocated output.
+            attn_metadata: Scheduler metadata providing seq_lens and block_table.
+            num_prefills:  Number of prefill requests preceding the decode rows in the packed metadata.
+            num_decode:    Number of decode requests.
+        """
         key_cache = kv_cache[0]
         value_cache = kv_cache[1]
         page_size = key_cache.shape[1]
@@ -314,12 +418,26 @@ class DeterministicAttentionImpl(AttentionImpl):
 
 
 def _to_fp32(t: torch.Tensor) -> torch.Tensor:
+    """Return t as a contiguous float32 tensor, aliasing when already so.
+
+    Args:
+        t: Any floating tensor.
+
+    Returns:
+        t if already contiguous float32, otherwise a new contiguous float32 copy of the same shape.
+    """
     if t.dtype == torch.float32 and t.is_contiguous():
         return t
     return t.to(torch.float32).contiguous()
 
 
 def _copy_from_fp32(dst: torch.Tensor, src_fp32: torch.Tensor) -> None:
+    """Copy a float32 kernel result into a destination of arbitrary dtype.
+
+    Args:
+        dst:      Destination tensor, any dtype, same shape as src_fp32.
+        src_fp32: Source float32 tensor; if dst already aliases it, this is a no-op.
+    """
     if dst.dtype == torch.float32:
         if dst.data_ptr() != src_fp32.data_ptr():
             dst.copy_(src_fp32)

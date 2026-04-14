@@ -20,6 +20,21 @@ def _launch_rms_norm_fxp(
     frac_bits: int,
     fxp_dtype,
 ) -> torch.Tensor:
+    """Launch the Triton RMSNorm kernel with a fixed-point squared-sum reduction.
+
+    Args:
+        x: Input activations, shape (..., hidden). Any leading dims are
+            flattened into the batch axis before launch. Must be on CUDA.
+        weight_fp32: RMSNorm scale weights, shape (hidden,), dtype float32.
+        eps: Variance epsilon added before the reciprocal square root.
+        frac_bits: Number of fractional bits in the fixed-point Q-format used
+            for the sum of squares.
+        fxp_dtype: Triton integer dtype (tl.int16 / tl.int32 / tl.int64)
+            used as the fixed-point accumulator.
+
+    Returns:
+        Normalised tensor with the same shape as x.
+    """
     assert x.is_cuda and weight_fp32.is_cuda
     x2d = x.reshape(-1, x.shape[-1]).contiguous()
     batch, hidden = x2d.shape
@@ -44,6 +59,11 @@ def _launch_rms_norm_fxp(
 @CustomOp.register_oot(name="RMSNorm")
 class DeterministicRMSNorm(RMSNorm):
     def _get_weight_fp32(self) -> torch.Tensor:
+        """Return the layer weight upcast to float32, cached across calls.
+
+        Returns:
+            Tensor of shape (hidden,) and dtype float32.
+        """
         cached = getattr(self, "_weight_fp32", None)
         if cached is not None:
             return cached
@@ -56,6 +76,19 @@ class DeterministicRMSNorm(RMSNorm):
         x: torch.Tensor,
         residual: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Deterministic RMSNorm forward on CUDA, matching vLLM's fused-residual API.
+
+        Args:
+            x: Activations of shape (..., hidden).
+            residual: Optional residual of shape (..., hidden). When provided,
+                x + residual is computed in float32 and normalised, and the
+                new residual is also returned (matching vLLM's fused form).
+
+        Returns:
+            If residual is None, the normalised tensor of shape
+            (..., hidden) cast back to the input dtype. Otherwise a tuple
+            (normalised, new_residual) with the same shapes.
+        """
         orig_dtype = x.dtype
         weight = self._get_weight_fp32()
         cfg = get_runtime_config()

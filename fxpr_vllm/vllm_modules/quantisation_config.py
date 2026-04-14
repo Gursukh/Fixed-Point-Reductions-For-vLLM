@@ -24,29 +24,47 @@ logger = logging.getLogger("fxpr_vllm")
 @register_quantization_config("fixed_point_det")
 class FixedPointConfig(QuantizationConfig):
     def __init__(self, frac_bits: int = DEFAULT_FRAC_BITS) -> None:
+        """Create a fixed-point quantisation config.
+
+        Args:
+            frac_bits: Number of fractional bits used by the GEMM accumulator.
+        """
         self.frac_bits = frac_bits
 
     def __repr__(self) -> str:
+        """Return a human-readable representation including frac_bits."""
         return f"FixedPointConfig(frac_bits={self.frac_bits})"
 
     @classmethod
     def get_name(cls) -> str:
+        """Return the vLLM quantisation method name used in --quantization."""
         return "fixed_point_det"
 
     @classmethod
     def get_supported_act_dtypes(cls) -> List[torch.dtype]:
+        """Return the activation dtypes accepted by the fixed-point GEMM."""
         return [torch.float16, torch.bfloat16, torch.float32]
 
     @classmethod
     def get_min_capability(cls) -> int:
+        """Return the minimum CUDA compute capability (major * 10 + minor)."""
         return 70
 
     @classmethod
     def get_config_filenames(cls) -> List[str]:
+        """Return the list of HF config filenames consumed by this method (none)."""
         return []
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "FixedPointConfig":
+        """Build a :class:`FixedPointConfig` from a serialised dict.
+
+        Args:
+            config: Raw dict (e.g. HF quantization_config); frac_bits overrides the runtime default when present.
+
+        Returns:
+            A configured :class:`FixedPointConfig`.
+        """
         frac_bits = config.get("frac_bits", get_runtime_config().frac_bits)
         return cls(frac_bits=frac_bits)
 
@@ -55,16 +73,31 @@ class FixedPointConfig(QuantizationConfig):
         layer: nn.Module,
         prefix: str,
     ) -> Optional["QuantizeMethodBase"]:
+        """Return a :class:`FixedPointLinearMethod` for linear layers, else None.
+
+        Args:
+            layer:  The module being quantised.
+            prefix: Qualified name of the layer within the model (unused).
+
+        Returns:
+            A linear-method wrapper for :class:`LinearBase` layers, else None so vLLM uses its default.
+        """
         if isinstance(layer, LinearBase):
             return FixedPointLinearMethod(self)
         return None
 
     def get_scaled_act_names(self) -> List[str]:
+        """Return activation names that require scaling (none for this method)."""
         return []
 
 
 class FixedPointLinearMethod(QuantizeMethodBase):
     def __init__(self, config: FixedPointConfig) -> None:
+        """Bind this linear method to its parent quantisation config.
+
+        Args:
+            config: The :class:`FixedPointConfig` providing frac_bits.
+        """
         self.config = config
 
     def create_weights(
@@ -77,6 +110,17 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         params_dtype: torch.dtype,
         **extra_weight_attrs: Any,
     ) -> None:
+        """Allocate a weight parameter of shape (sum(output_partition_sizes), input_size_per_partition).
+
+        Args:
+            layer:                    Linear layer receiving the parameter.
+            input_size_per_partition: Input features on this tensor-parallel shard.
+            output_partition_sizes:   Output features per fused shard; summed to form the weight's first dim.
+            input_size:               Full input feature count (unused; kept for the vLLM API).
+            output_size:              Full output feature count (unused).
+            params_dtype:             Dtype of the allocated weight.
+            **extra_weight_attrs:     Extra loader hooks; weight_loader is forwarded to :class:`ModelWeightParameter`.
+        """
         total_output_size = sum(output_partition_sizes)
 
         weight = ModelWeightParameter(
@@ -92,7 +136,13 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         layer.register_parameter("weight", weight)
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
+        """Pre-transpose and upcast the weight once after checkpoint loading.
 
+        Attaches layer.weight_fp32_t of shape (input_size_per_partition, total_output_size) in float32.
+
+        Args:
+            layer: Linear layer whose weight has just been loaded.
+        """
         with torch.no_grad():
             w_fp32_t = layer.weight.data.to(torch.float32).t().contiguous()
         layer.weight_fp32_t = w_fp32_t
@@ -103,6 +153,16 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Run the deterministic fixed-point GEMM for this linear layer.
+
+        Args:
+            layer: Linear layer holding weight_fp32_t (preferred) or the raw weight.
+            x:     (..., in_features) input activations; leading dims are flattened for the matmul.
+            bias:  (out_features,) optional bias.
+
+        Returns:
+            (..., out_features) tensor in the same dtype as x.
+        """
         orig_dtype = x.dtype
         x2d = x.reshape(-1, x.shape[-1]).to(torch.float32).contiguous()
 

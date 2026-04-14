@@ -11,6 +11,15 @@ logger = logging.getLogger("fxpr_vllm")
 
 
 def _env_int(name: str, default: int) -> int:
+    """Read an integer environment variable.
+
+    Args:
+        name: Environment variable name.
+        default: Value returned when the variable is unset, empty, or malformed.
+
+    Returns:
+        The parsed integer, or default on any failure.
+    """
     raw = os.getenv(name)
     if raw is None or raw == "":
         return default
@@ -29,6 +38,14 @@ class FxpRuntimeConfig:
 
 
 def load_runtime_config() -> FxpRuntimeConfig:
+    """Build an :class:`FxpRuntimeConfig` from VLLM_FXP_* environment variables.
+
+    Invalid VLLM_FXP_INT_BITS values (not in {16, 32, 64}) are logged and
+    replaced with the default.
+
+    Returns:
+        A frozen runtime config reflecting the current environment.
+    """
     int_bits = _env_int("VLLM_FXP_INT_BITS", DEFAULT_FXP_INT_BITS)
     if int_bits not in (16, 32, 64):
         logger.warning(
@@ -48,6 +65,11 @@ _runtime_config: FxpRuntimeConfig | None = None
 
 
 def get_runtime_config() -> FxpRuntimeConfig:
+    """Return the process-wide runtime config, loading it from env on first use.
+
+    Returns:
+        The cached :class:`FxpRuntimeConfig` singleton.
+    """
     global _runtime_config
     if _runtime_config is None:
         _runtime_config = load_runtime_config()
@@ -55,5 +77,10 @@ def get_runtime_config() -> FxpRuntimeConfig:
 
 
 def set_runtime_config(cfg: FxpRuntimeConfig) -> None:
+    """Override the process-wide runtime config.
+
+    Args:
+        cfg: New config to use for all subsequent :func:`get_runtime_config` calls.
+    """
     global _runtime_config
     _runtime_config = cfg

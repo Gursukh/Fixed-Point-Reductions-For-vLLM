@@ -75,8 +75,29 @@ def _register_sampler() -> None:
 
 
 def register() -> None:
-    """Register all components for the fixed-point reductions in vLLM."""
+    """Install every deterministic component into vLLM.
 
+    This is the vLLM plugin entry point (declared as
+    fixed_point_reductions under vllm.general_plugins in
+    pyproject.toml) and is safe to call multiple times: a module-level
+    _registered flag short-circuits subsequent invocations.
+
+    In order, this:
+
+    1. Replaces vllm.model_executor.layers.layernorm.RMSNorm with
+       :class:`DeterministicRMSNorm`, patching both the global custom-op
+       registry and any already-imported model modules.
+    2. Forces FixedPointConfig to register itself under the
+       fixed_point_det quantisation method.
+    3. Binds :class:`DeterministicAttentionBackend` to vLLM's CUSTOM
+       attention-backend slot.
+    4. Patches Sampler.compute_logprobs to use the deterministic
+       fixed-point log-softmax.
+
+    Raises:
+        Exception: Any failure during one of the sub-registrations is logged
+            and re-raised so plugin loading fails loudly.
+    """
     global _registered
     if _registered:
         return
