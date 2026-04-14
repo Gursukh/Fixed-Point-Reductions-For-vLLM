@@ -4,7 +4,7 @@ import triton
 import triton.language as tl
 
 from tests.fixed_point_helpers import requires_cuda
-from triton_vllm_fixed_point_reductions.fixed_point_kernels import gemm
+from src.fixed_point_kernels import gemm
 
 
 def _run_gemm_fp_kernel(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
@@ -41,6 +41,8 @@ def _run_gemm_fp_kernel(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         BLOCK_SIZE_M=BLOCK_M,
         BLOCK_SIZE_N=BLOCK_N,
         BLOCK_SIZE_K=BLOCK_K,
+        FRAC_BITS=16,
+        FXP_DTYPE=tl.int64,
     )
     return c
 

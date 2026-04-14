@@ -1,6 +1,19 @@
 import triton
 import triton.language as tl
 
+RCP_LN2 = 1.4426950408889634
+
+
+def fxp_tl_dtype(int_bits: int):
+    
+    if int_bits == 16:
+        return tl.int16
+    if int_bits == 32:
+        return tl.int32
+    if int_bits == 64:
+        return tl.int64
+    raise ValueError(f"fxp_int_bits must be 16/32/64, got {int_bits}")
+
 
 @triton.jit
 def flp_2_fxp(

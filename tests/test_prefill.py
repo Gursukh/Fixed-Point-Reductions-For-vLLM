@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from tests.fixed_point_helpers import requires_cuda
-from triton_vllm_fixed_point_reductions.fixed_point_kernels.prefill import (
+from src.fixed_point_kernels.prefill import (
     context_attention_fwd_fxp_kernel,
 )
 

@@ -1,13 +1,10 @@
 import torch
 import triton
 import triton.language as tl
-from triton_vllm_fixed_point_reductions.fixed_point_kernels.fixed_point import (
+from src.fixed_point_kernels.fixed_point import (
     fxp_to_flp,
 )
 from .gemm import dot_chunk_fxp
-
-
-RCP_LN2 = 1.4426950408889634
 
 
 @triton.jit
@@ -40,6 +37,7 @@ def decode_stage1_fp_kernel(
     Lk: tl.constexpr,
     Lv: tl.constexpr,
     FRAC_BITS: tl.constexpr,
+    FXP_DTYPE: tl.constexpr,
 ):
     cur_batch = tl.program_id(0)
     cur_head_id = tl.program_id(1)
@@ -60,7 +58,7 @@ def decode_stage1_fp_kernel(
 
     offs_q = cur_batch * stride_qbs + cur_head[:, None] * stride_qh + offs_d[None, :]
     q = tl.load(Q + offs_q, mask=(mask_h[:, None]) & (mask_d[None, :]), other=0.0).to(
-        tl.float32
+        tl.float16
     )
 
     kv_len_per_split = tl.cdiv(cur_batch_seq_len, NUM_KV_SPLITS)
@@ -94,8 +92,8 @@ def decode_stage1_fp_kernel(
                 K_Buffer + offs_buf_k,
                 mask=(offs_n[None, :] < split_kv_end) & (mask_d[:, None]),
                 other=0.0,
-            ).to(tl.float32)
-            qk_fxp = dot_chunk_fxp(q, k, FRAC_BITS)
+            ).to(tl.float16)
+            qk_fxp = dot_chunk_fxp(q, k, FRAC_BITS, FXP_DTYPE)
             qk = fxp_to_flp(qk_fxp, FRAC_BITS, tl.float32)
             qk *= sm_scale
 
@@ -111,7 +109,7 @@ def decode_stage1_fp_kernel(
                 V_Buffer + offs_buf_v,
                 mask=(offs_n[:, None] < split_kv_end) & (mask_dv[None, :]),
                 other=0.0,
-            ).to(tl.float32)
+            ).to(tl.float16)
 
             # online softmax
             n_e_max = tl.maximum(tl.max(qk, 1), e_max)
@@ -120,7 +118,7 @@ def decode_stage1_fp_kernel(
             acc *= re_scale[:, None]
 
             # deterministic P·V
-            pv_fxp = dot_chunk_fxp(p, v, FRAC_BITS)
+            pv_fxp = dot_chunk_fxp(p.to(tl.float16), v, FRAC_BITS, FXP_DTYPE)
             acc += fxp_to_flp(pv_fxp, FRAC_BITS, tl.float32)
 
             e_sum = e_sum * re_scale + tl.sum(p, 1)
@@ -221,8 +219,13 @@ def decode_attention_fwd_fp_kernel(
     sm_scale: float,
     page_size: int = 1,
     frac_bits: int = 14,
+    fxp_dtype=tl.int32,
 ):
-    assert num_kv_splits == attn_logits.shape[2]
+    if num_kv_splits != attn_logits.shape[2]:
+        raise ValueError(
+            f"num_kv_splits ({num_kv_splits}) must match attn_logits.shape[2] "
+            f"({attn_logits.shape[2]})"
+        )
 
     BLOCK = 32
     Lk = k_buffer.shape[-1]
@@ -269,6 +272,7 @@ def decode_attention_fwd_fp_kernel(
         Lk=Lk,
         Lv=Lv,
         FRAC_BITS=frac_bits,
+        FXP_DTYPE=fxp_dtype,
         num_warps=4,
         num_stages=2,
     )

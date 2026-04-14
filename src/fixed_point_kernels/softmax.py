@@ -14,65 +14,48 @@ def log_softmax_fxp_kernel(
     N,
     FRAC_BITS: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    FXP_DTYPE: tl.constexpr,
 ):
-    """
-    Deterministic log-softmax over the last dimension.
-
-    One program per row. Three sequential passes over the vocab dim:
-        1. max reduction (associative in a fixed left-to-right loop)
-        2. sum(exp(x - max)) accumulated in Q-format fixed point — bitwise
-           reproducible because fixed-point sum is order-invariant and
-           exp(x - max) ∈ (0, 1] fits in the fractional range.
-        3. y = (x - max) - log(sum)
-    """
     row = tl.program_id(0)
     x_row = X_ptr + row * stride_xm
     y_row = Y_ptr + row * stride_ym
 
-    # ---- pass 1: max ----
     m = -float("inf")
     for start in range(0, N, BLOCK_N):
         offs = start + tl.arange(0, BLOCK_N)
         mask = offs < N
-        x = tl.load(x_row + offs, mask=mask, other=-float("inf")).to(tl.float32)
-        m = tl.maximum(m, tl.max(x, axis=0))
+        x = tl.load(x_row + offs, mask=mask, other=-float("inf")).to(tl.float16)
+        m = tl.maximum(m, tl.max(x, axis=0).to(tl.float32))
 
-    # ---- pass 2: fixed-point sum of exp(x - max) ----
-    # Accumulate in int64 because V * 2^FRAC_BITS can easily exceed int32
-    # (vocab ~150k, sum(exp(x-max)) approaches V → 150k * 65536 ≈ 9.8e9).
-    l_fxp = tl.zeros([1], dtype=tl.int64)
+    l_fxp = tl.zeros([1], dtype=FXP_DTYPE)
     for start in range(0, N, BLOCK_N):
         offs = start + tl.arange(0, BLOCK_N)
         mask = offs < N
-        x = tl.load(x_row + offs, mask=mask, other=-float("inf")).to(tl.float32)
-        p = tl.exp(x - m)
+        x = tl.load(x_row + offs, mask=mask, other=-float("inf")).to(tl.float16)
+        p = tl.exp(x.to(tl.float32) - m)
         p = tl.where(mask, p, 0.0)
-        p_fxp = flp_2_fxp(p, FRAC_BITS, tl.int64)
+        p_fxp = flp_2_fxp(p, FRAC_BITS, FXP_DTYPE)
         l_fxp += tl.sum(p_fxp, axis=0)
 
     l = fxp_to_flp(l_fxp, FRAC_BITS, tl.float32)
     log_l = tl.log(l)
 
-    # ---- pass 3: write (x - max) - log(sum) ----
     for start in range(0, N, BLOCK_N):
         offs = start + tl.arange(0, BLOCK_N)
         mask = offs < N
-        x = tl.load(x_row + offs, mask=mask, other=0.0).to(tl.float32)
-        y = (x - m) - log_l
+        x = tl.load(x_row + offs, mask=mask, other=0.0).to(tl.float16)
+        y = (x.to(tl.float32) - m) - log_l
         tl.store(y_row + offs, y, mask=mask)
 
 
 def log_softmax_fxp(
     x: torch.Tensor,
+    fxp_dtype,
     dim: int = -1,
     frac_bits: int = 16,
     block_n: int = 1024,
 ) -> torch.Tensor:
-    """
-    Deterministic fixed-point log-softmax.
 
-    Casts to fp32 internally; returns a tensor in the original dtype.
-    """
     assert x.is_cuda, "log_softmax_fxp requires a CUDA tensor"
 
     orig_dtype = x.dtype
@@ -101,6 +84,7 @@ def log_softmax_fxp(
         N,
         FRAC_BITS=frac_bits,
         BLOCK_N=BLOCK_N,
+        FXP_DTYPE=fxp_dtype,
     )
 
     y = y2d.view(orig_shape).to(orig_dtype)
