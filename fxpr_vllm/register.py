@@ -107,9 +107,8 @@ def register() -> None:
 
     cfg = get_runtime_config()
     logger.info(
-        "Runtime Config: frac_bits=%d num_kv_splits=%d fxp_int_bits=%d",
+        "Runtime Config: frac_bits=%d fxp_int_bits=%d",
         cfg.frac_bits,
-        cfg.num_kv_splits,
         cfg.fxp_int_bits,
     )
 

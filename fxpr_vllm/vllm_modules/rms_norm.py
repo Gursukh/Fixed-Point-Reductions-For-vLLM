@@ -61,14 +61,19 @@ class DeterministicRMSNorm(RMSNorm):
     def _get_weight_fp32(self) -> torch.Tensor:
         """Return the layer weight upcast to float32, cached across calls.
 
+        The cache is keyed by the underlying storage pointer so hot-swapping
+        the weight (LoRA, adapter reload) invalidates the cached float32 copy.
+
         Returns:
             Tensor of shape (hidden,) and dtype float32.
         """
-        cached = getattr(self, "_weight_fp32", None)
-        if cached is not None:
-            return cached
-        w = self.weight.to(torch.float32)
-        self._weight_fp32 = w
+        weight = self.weight
+        key = weight.data_ptr()
+        cached = getattr(self, "_weight_fp32_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        w = weight.to(torch.float32)
+        self._weight_fp32_cache = (key, w)
         return w
 
     def forward_cuda(

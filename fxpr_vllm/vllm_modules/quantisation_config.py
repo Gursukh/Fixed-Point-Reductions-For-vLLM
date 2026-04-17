@@ -20,6 +20,19 @@ from .config import DEFAULT_FRAC_BITS, get_runtime_config
 
 logger = logging.getLogger("fxpr_vllm")
 
+_INT_BITS_FOR_TL = {
+    "int16": 16,
+    "int32": 32,
+    "int64": 64,
+}
+
+
+def _int_bits_of(fxp_dtype) -> int:
+    name = getattr(fxp_dtype, "name", str(fxp_dtype))
+    if name not in _INT_BITS_FOR_TL:
+        raise ValueError(f"Unsupported fxp dtype {fxp_dtype!r}")
+    return _INT_BITS_FOR_TL[name]
+
 
 @register_quantization_config("fixed_point_det")
 class FixedPointConfig(QuantizationConfig):
@@ -29,6 +42,12 @@ class FixedPointConfig(QuantizationConfig):
         Args:
             frac_bits: Number of fractional bits used by the GEMM accumulator.
         """
+        fxp_dtype = fixed_tl_dtype(get_runtime_config().fxp_int_bits)
+        int_bits = _int_bits_of(fxp_dtype)
+        if not isinstance(frac_bits, int) or not (0 <= frac_bits < int_bits):
+            raise ValueError(
+                f"frac_bits must be an int in [0, {int_bits}); got {frac_bits!r}"
+            )
         self.frac_bits = frac_bits
 
     def __repr__(self) -> str:

@@ -24,8 +24,8 @@ def rms_norm_fxp_kernel(
     cols = tl.arange(0, BLOCK)
     mask = cols < hidden_size
 
-    x = tl.load(X_ptr + row * stride_x + cols, mask=mask, other=0.0).to(tl.float16)
-    w = tl.load(W_ptr + cols, mask=mask, other=0.0).to(tl.float16)
+    x = tl.load(X_ptr + row * stride_x + cols, mask=mask, other=0.0).to(tl.float32)
+    w = tl.load(W_ptr + cols, mask=mask, other=0.0).to(tl.float32)
 
     x_sq = x * x
 
