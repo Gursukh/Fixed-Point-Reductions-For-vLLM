@@ -117,8 +117,8 @@ def context_attention_fwd_fxp_kernel(
     is_causal: bool = True,
     softmax_scale: float | None = None,
     frac_bits: int = 14,
-    block_n: int = 16,
-    d_chunk: int = 16,
+    block_n: int = 64,
+    d_chunk: int = 64,
 ):
     assert q.is_cuda and k.is_cuda and v.is_cuda, (
         "context_attention_fwd_fxp_kernel requires CUDA tensors"
