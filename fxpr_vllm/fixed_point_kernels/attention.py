@@ -409,7 +409,7 @@ def unified_attention_fxp(
     softmax_scale: float | None = None,
     frac_bits: int = 14,
     block_n: int = 16,
-    d_chunk: int = 16,
+    d_chunk: int = 64,
 ):
     """Run unified prefill + decode attention on a vLLM-layout paged KV cache."""
 

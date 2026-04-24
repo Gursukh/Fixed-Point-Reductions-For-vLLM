@@ -161,13 +161,10 @@ class DeterministicAttentionImpl(AttentionImpl):
         block_table = attn_metadata.block_table
         max_query_len = int(attn_metadata.max_query_len)
 
-        q32 = _to_fp32(query)
-        o32 = torch.empty_like(q32)
-
         unified_attention_fxp(
-            q=q32,
+            q=query,
             kv_cache=kv_cache,
-            o=o32,
+            o=output,
             query_start_loc=query_start_loc,
             seq_lens=seq_lens,
             block_table=block_table,
@@ -178,7 +175,6 @@ class DeterministicAttentionImpl(AttentionImpl):
             frac_bits=self.frac_bits,
             fxp_dtype=self.fxp_dtype,
         )
-        _copy_from_fp32(output, o32)
 
         return output.view(num_tokens, self.num_heads * self.head_size)
 
@@ -214,15 +210,3 @@ class DeterministicAttentionImpl(AttentionImpl):
         )
 
 
-def _to_fp32(t: torch.Tensor) -> torch.Tensor:
-    if t.dtype == torch.float32 and t.is_contiguous():
-        return t
-    return t.to(torch.float32).contiguous()
-
-
-def _copy_from_fp32(dst: torch.Tensor, src_fp32: torch.Tensor) -> None:
-    if dst.dtype == torch.float32:
-        if dst.data_ptr() != src_fp32.data_ptr():
-            dst.copy_(src_fp32)
-        return
-    dst.copy_(src_fp32.to(dst.dtype))

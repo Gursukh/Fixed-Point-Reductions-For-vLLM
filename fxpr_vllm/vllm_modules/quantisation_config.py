@@ -155,16 +155,18 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         layer.register_parameter("weight", weight)
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        """Pre-transpose and upcast the weight once after checkpoint loading.
+        """Pre-transpose the weight once after checkpoint loading.
 
-        Attaches layer.weight_fp32_t of shape (input_size_per_partition, total_output_size) in float32.
+        Attaches layer.weight_t of shape (input_size_per_partition, total_output_size).
+        Weights are kept in bfloat16 (matching checkpoint precision); the GEMM kernel
+        widens to fp32 internally via tl.load(...).to(tl.float32).
 
         Args:
             layer: Linear layer whose weight has just been loaded.
         """
         with torch.no_grad():
-            w_fp32_t = layer.weight.data.to(torch.float32).t().contiguous()
-        layer.weight_fp32_t = w_fp32_t
+            w_t = layer.weight.data.to(torch.bfloat16).t().contiguous()
+        layer.weight_t = w_t
 
     def apply(
         self,
@@ -175,7 +177,7 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         """Run the deterministic fixed-point GEMM for this linear layer.
 
         Args:
-            layer: Linear layer holding weight_fp32_t (preferred) or the raw weight.
+            layer: Linear layer holding weight_t (preferred) or the raw weight.
             x:     (..., in_features) input activations; leading dims are flattened for the matmul.
             bias:  (out_features,) optional bias.
 
@@ -183,11 +185,16 @@ class FixedPointLinearMethod(QuantizeMethodBase):
             (..., out_features) tensor in the same dtype as x.
         """
         orig_dtype = x.dtype
-        x2d = x.reshape(-1, x.shape[-1]).to(torch.float32).contiguous()
-
-        w_t = getattr(layer, "weight_fp32_t", None)
+        w_t = getattr(layer, "weight_t", None)
         if w_t is None:
-            w_t = layer.weight.data.to(torch.float32).t().contiguous()
+            w_t = layer.weight.data.to(torch.bfloat16).t().contiguous()
+
+        # Cast input to match weight dtype; the GEMM kernel widens both to fp32
+        # internally, so no precision is lost relative to the original fp32 path.
+        x2d = x.reshape(-1, x.shape[-1])
+        if x2d.dtype != w_t.dtype:
+            x2d = x2d.to(w_t.dtype)
+        x2d = x2d.contiguous()
 
         fxp_dtype = fixed_tl_dtype(get_runtime_config().fxp_int_bits)
         out = launch_gemm_fxp(
