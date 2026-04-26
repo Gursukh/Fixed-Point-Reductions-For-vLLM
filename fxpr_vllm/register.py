@@ -112,6 +112,11 @@ def register() -> None:
         cfg.fxp_int_bits,
     )
 
+    # Import to register fxpr::gemm_fxp / fxpr::rms_norm_fxp with torch.library.
+    # Each call site becomes one opaque FX node under torch.compile instead of
+    # the Python launcher being traced into ~8 nodes per call.
+    from . import library_ops  # noqa: F401
+
     try:
         _register_rms_norm()
         logger.info("RMSNorm registered")
