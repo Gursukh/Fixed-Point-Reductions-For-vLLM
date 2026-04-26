@@ -46,12 +46,14 @@ def _run_rms_norm_kernel(
         x,
         w,
         y,
+        x,  # residual buffer (unused; HAS_RESIDUAL=False)
         x.stride(0),
         hidden,
         eps=eps,
         BLOCK=block,
         FRAC_BITS=16,
         FXP_DTYPE=tl.int64,
+        HAS_RESIDUAL=False,
     )
     return y
 

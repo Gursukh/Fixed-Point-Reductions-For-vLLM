@@ -1,18 +1,25 @@
-import triton
+import triton  # noqa: F401  (kept for downstream re-exports)
 import triton.language as tl
 
 RCP_LN2 = 1.4426950408889634
 
+_TL_INT_BY_BITS = {16: tl.int16, 32: tl.int32, 64: tl.int64}
+
 
 def fixed_tl_dtype(int_bits: int):
+    """Return the tl signed-int dtype for a given bit width (16/32/64)."""
+    try:
+        return _TL_INT_BY_BITS[int_bits]
+    except KeyError:
+        raise ValueError(f"fxp_int_bits must be 16/32/64, got {int_bits}") from None
 
-    if int_bits == 16:
-        return tl.int16
-    if int_bits == 32:
-        return tl.int32
-    if int_bits == 64:
-        return tl.int64
-    raise ValueError(f"fxp_int_bits must be 16/32/64, got {int_bits}")
+
+def int_bits_of(fxp_dtype) -> int:
+    """Inverse of :func:`fixed_tl_dtype`: bit width of a tl signed-int dtype."""
+    bits = getattr(fxp_dtype, "primitive_bitwidth", None)
+    if bits not in (16, 32, 64):
+        raise ValueError(f"Unsupported fxp dtype {fxp_dtype!r}")
+    return bits
 
 
 @triton.jit

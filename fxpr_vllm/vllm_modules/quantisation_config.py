@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -14,24 +15,11 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.parameter import ModelWeightParameter
 from vllm.model_executor.layers.quantization import register_quantization_config
 
-from ..fixed_point_kernels.fixed_point import fixed_tl_dtype
+from ..fixed_point_kernels.fixed_point import fixed_tl_dtype, int_bits_of
 from ..library_ops import gemm_fxp as gemm_fxp_op
 from .config import DEFAULT_FRAC_BITS, get_runtime_config
 
 logger = logging.getLogger("fxpr_vllm")
-
-_INT_BITS_FOR_TL = {
-    "int16": 16,
-    "int32": 32,
-    "int64": 64,
-}
-
-
-def _int_bits_of(fxp_dtype) -> int:
-    name = getattr(fxp_dtype, "name", str(fxp_dtype))
-    if name not in _INT_BITS_FOR_TL:
-        raise ValueError(f"Unsupported fxp dtype {fxp_dtype!r}")
-    return _INT_BITS_FOR_TL[name]
 
 
 @register_quantization_config("fixed_point_det")
@@ -43,7 +31,7 @@ class FixedPointConfig(QuantizationConfig):
             frac_bits: Number of fractional bits used by the GEMM accumulator.
         """
         fxp_dtype = fixed_tl_dtype(get_runtime_config().fxp_int_bits)
-        int_bits = _int_bits_of(fxp_dtype)
+        int_bits = int_bits_of(fxp_dtype)
         if not isinstance(frac_bits, int) or not (0 <= frac_bits < int_bits):
             raise ValueError(
                 f"frac_bits must be an int in [0, {int_bits}); got {frac_bits!r}"
@@ -60,7 +48,7 @@ class FixedPointConfig(QuantizationConfig):
         return "fixed_point_det"
 
     @classmethod
-    def get_supported_act_dtypes(cls) -> List[torch.dtype]:
+    def get_supported_act_dtypes(cls) -> list[torch.dtype]:
         """Return the activation dtypes accepted by the fixed-point GEMM."""
         return [torch.float16, torch.bfloat16, torch.float32]
 
@@ -70,7 +58,7 @@ class FixedPointConfig(QuantizationConfig):
         return 70
 
     @classmethod
-    def get_config_filenames(cls) -> List[str]:
+    def get_config_filenames(cls) -> list[str]:
         """Return the list of HF config filenames consumed by this method (none)."""
         return []
 
@@ -91,7 +79,7 @@ class FixedPointConfig(QuantizationConfig):
         self,
         layer: nn.Module,
         prefix: str,
-    ) -> Optional["QuantizeMethodBase"]:
+    ) -> "QuantizeMethodBase | None":
         """Return a :class:`FixedPointLinearMethod` for linear layers, else None.
 
         Args:
@@ -105,7 +93,7 @@ class FixedPointConfig(QuantizationConfig):
             return FixedPointLinearMethod(self)
         return None
 
-    def get_scaled_act_names(self) -> List[str]:
+    def get_scaled_act_names(self) -> list[str]:
         """Return activation names that require scaling (none for this method)."""
         return []
 
@@ -118,6 +106,9 @@ class FixedPointLinearMethod(QuantizeMethodBase):
             config: The :class:`FixedPointConfig` providing frac_bits.
         """
         self.config = config
+        # Cache once at construction time; the runtime config is process-global
+        # and does not change after plugin registration.
+        self.fxp_int_bits = get_runtime_config().fxp_int_bits
 
     def create_weights(
         self,
@@ -155,49 +146,39 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         layer.register_parameter("weight", weight)
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        """Pre-transpose the weight once after checkpoint loading.
+        """Pre-transpose the weight once after checkpoint loading and free the original.
 
         Attaches layer.weight_t of shape (input_size_per_partition, total_output_size).
         Weights are kept in bfloat16 (matching checkpoint precision); the GEMM kernel
-        widens to fp32 internally via tl.load(...).to(tl.float32).
-
-        Args:
-            layer: Linear layer whose weight has just been loaded.
+        widens to fp32 internally via tl.load(...).to(tl.float32). The original
+        layer.weight is dereferenced to recover HBM.
         """
         with torch.no_grad():
             w_t = layer.weight.data.to(torch.bfloat16).t().contiguous()
         layer.weight_t = w_t
+        # Free the original weight; weight_t is the only copy we need.
+        del layer.weight
+        layer.register_parameter("weight", None)
 
     def apply(
         self,
         layer: nn.Module,
         x: torch.Tensor,
-        bias: Optional[torch.Tensor] = None,
+        bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Run the deterministic fixed-point GEMM for this linear layer.
-
-        Args:
-            layer: Linear layer holding weight_t (preferred) or the raw weight.
-            x:     (..., in_features) input activations; leading dims are flattened for the matmul.
-            bias:  (out_features,) optional bias.
-
-        Returns:
-            (..., out_features) tensor in the same dtype as x.
-        """
+        """Run the deterministic fixed-point GEMM for this linear layer."""
         orig_dtype = x.dtype
-        w_t = getattr(layer, "weight_t", None)
-        if w_t is None:
-            w_t = layer.weight.data.to(torch.bfloat16).t().contiguous()
+        w_t = layer.weight_t
 
         # Cast input to match weight dtype; the GEMM kernel widens both to fp32
         # internally, so no precision is lost relative to the original fp32 path.
         x2d = x.reshape(-1, x.shape[-1])
         if x2d.dtype != w_t.dtype:
             x2d = x2d.to(w_t.dtype)
-        x2d = x2d.contiguous()
+        if not x2d.is_contiguous():
+            x2d = x2d.contiguous()
 
-        fxp_int_bits = get_runtime_config().fxp_int_bits
-        out = gemm_fxp_op(x2d, w_t, self.config.frac_bits, fxp_int_bits)
+        out = gemm_fxp_op(x2d, w_t, self.config.frac_bits, self.fxp_int_bits)
         out = out.view(*x.shape[:-1], out.shape[-1])
 
         if bias is not None:

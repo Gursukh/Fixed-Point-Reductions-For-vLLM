@@ -39,8 +39,10 @@ def attention_fwd_fxp_body(
     HEAD_DIM_PADDED: tl.constexpr,
     HEAD_DIM: tl.constexpr,
     HEAD_DIM_CHUNK: tl.constexpr,
-    FRACTIONAL_BITS: tl.constexpr,
-    FIXED_POINT_DTYPE: tl.constexpr,
+    FRAC_BITS: tl.constexpr,
+    FXP_DTYPE: tl.constexpr,
+    LOGIT_SOFTCAP: tl.constexpr = 0.0,
+    WINDOW_SIZE: tl.constexpr = 0,
     IS_PAGED: tl.constexpr = False,
     PAGE_SIZE: tl.constexpr = 1,
     K=0,
@@ -102,7 +104,7 @@ def attention_fwd_fxp_body(
                 + kv_head_index * stride_key_head
             )
 
-        qk_fxp = tl.zeros([QUERY_BLOCK_SIZE, KEY_BLOCK_SIZE], dtype=FIXED_POINT_DTYPE)
+        qk_fxp = tl.zeros([QUERY_BLOCK_SIZE, KEY_BLOCK_SIZE], dtype=FXP_DTYPE)
         for head_dim_chunk_start in tl.range(0, HEAD_DIM, HEAD_DIM_CHUNK):
             head_dim_chunk_offsets = head_dim_chunk_start + tl.arange(0, HEAD_DIM_CHUNK)
             head_dim_chunk_valid = head_dim_chunk_offsets < HEAD_DIM
@@ -121,16 +123,22 @@ def attention_fwd_fxp_body(
             qk_fxp += dot_chunk_fxp(
                 a=query_chunk,
                 b=key_chunk,
-                FRAC_BITS=FRACTIONAL_BITS,
-                FXP_DTYPE=FIXED_POINT_DTYPE,
+                FRAC_BITS=FRAC_BITS,
+                FXP_DTYPE=FXP_DTYPE,
             )
 
         qk = fixed_to_float(
             x=qk_fxp,
-            fractional_bit_width=FRACTIONAL_BITS,
+            fractional_bit_width=FRAC_BITS,
             floating_point_type=tl.float32,
         )
         qk = qk * softmax_scale
+        if LOGIT_SOFTCAP > 0.0:
+            # softmax_scale already absorbed RCP_LN2, so the cap lives in the
+            # same log2 domain as qk. tanh is unitless: applying it here is
+            # equivalent to capping the natural-domain logit and re-converting.
+            softcap_log2: tl.constexpr = LOGIT_SOFTCAP * RCP_LN2
+            qk = softcap_log2 * tl.extra.libdevice.tanh(qk / softcap_log2)
         if USE_ALIBI:
             qk += alibi_slope * (
                 key_positions[None, :].to(tl.float32)
@@ -142,13 +150,17 @@ def attention_fwd_fxp_body(
             score_mask = score_mask & (
                 causal_row_positions[:, None] >= key_positions[None, :]
             )
+        if WINDOW_SIZE > 0:
+            score_mask = score_mask & (
+                key_positions[None, :] > causal_row_positions[:, None] - WINDOW_SIZE
+            )
         qk = tl.where(score_mask, qk, float("-inf"))
 
         running_row_max = tl.maximum(running_row_max, tl.max(qk, 1))
 
-    softmax_denominator_fxp = tl.zeros([QUERY_BLOCK_SIZE], dtype=FIXED_POINT_DTYPE)
+    softmax_denominator_fxp = tl.zeros([QUERY_BLOCK_SIZE], dtype=FXP_DTYPE)
     output_accumulator_fxp = tl.zeros(
-        [QUERY_BLOCK_SIZE, HEAD_DIM_PADDED], dtype=FIXED_POINT_DTYPE
+        [QUERY_BLOCK_SIZE, HEAD_DIM_PADDED], dtype=FXP_DTYPE
     )
 
     # Pass 2: accumulate softmax-weighted V using running_row_max from pass 1.
@@ -179,7 +191,7 @@ def attention_fwd_fxp_body(
                 + kv_head_index * stride_key_head
             )
 
-        qk_fxp = tl.zeros([QUERY_BLOCK_SIZE, KEY_BLOCK_SIZE], dtype=FIXED_POINT_DTYPE)
+        qk_fxp = tl.zeros([QUERY_BLOCK_SIZE, KEY_BLOCK_SIZE], dtype=FXP_DTYPE)
         for head_dim_chunk_start in tl.range(0, HEAD_DIM, HEAD_DIM_CHUNK):
             head_dim_chunk_offsets = head_dim_chunk_start + tl.arange(0, HEAD_DIM_CHUNK)
             head_dim_chunk_valid = head_dim_chunk_offsets < HEAD_DIM
@@ -198,16 +210,19 @@ def attention_fwd_fxp_body(
             qk_fxp += dot_chunk_fxp(
                 a=query_chunk,
                 b=key_chunk,
-                FRAC_BITS=FRACTIONAL_BITS,
-                FXP_DTYPE=FIXED_POINT_DTYPE,
+                FRAC_BITS=FRAC_BITS,
+                FXP_DTYPE=FXP_DTYPE,
             )
 
         qk = fixed_to_float(
             x=qk_fxp,
-            fractional_bit_width=FRACTIONAL_BITS,
+            fractional_bit_width=FRAC_BITS,
             floating_point_type=tl.float32,
         )
         qk = qk * softmax_scale
+        if LOGIT_SOFTCAP > 0.0:
+            softcap_log2: tl.constexpr = LOGIT_SOFTCAP * RCP_LN2
+            qk = softcap_log2 * tl.extra.libdevice.tanh(qk / softcap_log2)
         if USE_ALIBI:
             qk += alibi_slope * (
                 key_positions[None, :].to(tl.float32)
@@ -218,6 +233,10 @@ def attention_fwd_fxp_body(
         if IS_CAUSAL:
             score_mask = score_mask & (
                 causal_row_positions[:, None] >= key_positions[None, :]
+            )
+        if WINDOW_SIZE > 0:
+            score_mask = score_mask & (
+                key_positions[None, :] > causal_row_positions[:, None] - WINDOW_SIZE
             )
         qk = tl.where(score_mask, qk, float("-inf"))
 
@@ -240,8 +259,8 @@ def attention_fwd_fxp_body(
         attention_weights = tl.math.exp2(qk - running_row_max[:, None])
         attention_weights_fxp = float_to_fixed(
             x=attention_weights,
-            fractional_bit_width=FRACTIONAL_BITS,
-            fixed_point_type=FIXED_POINT_DTYPE,
+            fractional_bit_width=FRAC_BITS,
+            fixed_point_type=FXP_DTYPE,
         )
         softmax_denominator_fxp += tl.sum(attention_weights_fxp, axis=1)
 
@@ -253,18 +272,18 @@ def attention_fwd_fxp_body(
         output_accumulator_fxp += dot_chunk_fxp(
             a=attention_weights,
             b=value_chunk,
-            FRAC_BITS=FRACTIONAL_BITS,
-            FXP_DTYPE=FIXED_POINT_DTYPE,
+            FRAC_BITS=FRAC_BITS,
+            FXP_DTYPE=FXP_DTYPE,
         )
 
     softmax_denominator = fixed_to_float(
         x=softmax_denominator_fxp,
-        fractional_bit_width=FRACTIONAL_BITS,
+        fractional_bit_width=FRAC_BITS,
         floating_point_type=tl.float32,
     )
     output_accumulator = fixed_to_float(
         x=output_accumulator_fxp,
-        fractional_bit_width=FRACTIONAL_BITS,
+        fractional_bit_width=FRAC_BITS,
         floating_point_type=tl.float32,
     )
     softmax_denominator_safe = tl.maximum(softmax_denominator, 1.0e-6)
@@ -312,9 +331,11 @@ def unified_attention_fxp_kernel(
     IS_CAUSAL: tl.constexpr,
     USE_ALIBI: tl.constexpr,
     HEAD_DIM: tl.constexpr,
-    FRACTIONAL_BITS: tl.constexpr,
+    FRAC_BITS: tl.constexpr,
     HEAD_DIM_CHUNK: tl.constexpr,
-    FIXED_POINT_DTYPE: tl.constexpr,
+    FXP_DTYPE: tl.constexpr,
+    LOGIT_SOFTCAP: tl.constexpr = 0.0,
+    WINDOW_SIZE: tl.constexpr = 0,
 ):
     """Unified prefill+decode attention over a paged KV cache."""
     request_index = tl.program_id(0)
@@ -376,8 +397,10 @@ def unified_attention_fxp_kernel(
         HEAD_DIM_PADDED=HEAD_DIM_PADDED,
         HEAD_DIM=HEAD_DIM,
         HEAD_DIM_CHUNK=HEAD_DIM_CHUNK,
-        FRACTIONAL_BITS=FRACTIONAL_BITS,
-        FIXED_POINT_DTYPE=FIXED_POINT_DTYPE,
+        FRAC_BITS=FRAC_BITS,
+        FXP_DTYPE=FXP_DTYPE,
+        LOGIT_SOFTCAP=LOGIT_SOFTCAP,
+        WINDOW_SIZE=WINDOW_SIZE,
         IS_PAGED=True,
         PAGE_SIZE=PAGE_SIZE,
         K_cache=K_cache,
@@ -410,6 +433,8 @@ def unified_attention_fxp(
     frac_bits: int = 14,
     block_n: int = 64,
     d_chunk: int = 64,
+    logits_soft_cap: float = 0.0,
+    window_size: int = 0,
 ):
     """Run unified prefill + decode attention on a vLLM-layout paged KV cache."""
 
@@ -426,13 +451,13 @@ def unified_attention_fxp(
 
     use_alibi = alibi_slopes is not None
     if use_alibi:
-        assert alibi_slopes.is_cuda and alibi_slopes.dtype == torch.float32, (
-            "alibi_slopes must be a float32 CUDA tensor"
-        )
-
-        alibi_slopes_scaled = alibi_slopes * RCP_LN2
+        assert (
+            alibi_slopes.is_cuda and alibi_slopes.dtype == torch.float32
+        ), "alibi_slopes must be a float32 CUDA tensor (pre-scaled by RCP_LN2)"
+        alibi_slopes_scaled = alibi_slopes
     else:
-        alibi_slopes_scaled = q
+        # Kernel guarded by USE_ALIBI; pass an empty buffer so the pointer is valid.
+        alibi_slopes_scaled = torch.empty(0, device=q.device, dtype=torch.float32)
 
     query_block_size = 64
     num_requests = seq_lens.shape[0]
@@ -476,9 +501,11 @@ def unified_attention_fxp(
         IS_CAUSAL=is_causal,
         USE_ALIBI=use_alibi,
         HEAD_DIM=head_dim,
-        FRACTIONAL_BITS=frac_bits,
+        FRAC_BITS=frac_bits,
         HEAD_DIM_CHUNK=d_chunk,
-        FIXED_POINT_DTYPE=fxp_dtype,
+        FXP_DTYPE=fxp_dtype,
+        LOGIT_SOFTCAP=logits_soft_cap,
+        WINDOW_SIZE=window_size,
         num_warps=4 if head_dim <= 64 else 8,
         num_stages=1,
     )

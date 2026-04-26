@@ -1,5 +1,4 @@
 import logging
-from typing import List, Optional, Type
 
 import torch
 
@@ -13,13 +12,13 @@ from vllm.v1.attention.backend import (
 from vllm.v1.attention.backends.triton_attn import TritonAttentionBackend
 
 from ..fixed_point_kernels.attention import unified_attention_fxp
-from ..fixed_point_kernels.fixed_point import fixed_tl_dtype
+from ..fixed_point_kernels.fixed_point import RCP_LN2, fixed_tl_dtype
 from .config import get_runtime_config
 
 logger = logging.getLogger("fxpr_vllm")
 
-_flash_meta_cls: Optional[Type[AttentionMetadata]] = None
-_flash_builder_cls: Optional[Type[AttentionMetadataBuilder]] = None
+_flash_meta_cls: type[AttentionMetadata] | None = None
+_flash_builder_cls: type[AttentionMetadataBuilder] | None = None
 
 
 def _lazy_import_flash_meta() -> None:
@@ -50,17 +49,17 @@ class DeterministicAttentionBackend(TritonAttentionBackend):
         return "CUSTOM"
 
     @staticmethod
-    def get_impl_cls() -> Type["DeterministicAttentionImpl"]:
+    def get_impl_cls() -> type["DeterministicAttentionImpl"]:
         return DeterministicAttentionImpl
 
     @staticmethod
-    def get_metadata_cls() -> Type[AttentionMetadata]:
+    def get_metadata_cls() -> type[AttentionMetadata]:
         _lazy_import_flash_meta()
         assert _flash_meta_cls is not None
         return _flash_meta_cls
 
     @staticmethod
-    def get_builder_cls() -> Type[AttentionMetadataBuilder]:
+    def get_builder_cls() -> type[AttentionMetadataBuilder]:
         _lazy_import_flash_meta()
         assert _flash_builder_cls is not None
         return _flash_builder_cls
@@ -73,17 +72,23 @@ class DeterministicAttentionImpl(AttentionImpl):
         head_size: int,
         scale: float,
         num_kv_heads: int,
-        alibi_slopes: Optional[List[float]],
-        sliding_window: Optional[int],
+        alibi_slopes: list[float] | None,
+        sliding_window: int | None,
         kv_cache_dtype: str = "auto",
         blocktable_size: int = 16,
-        logits_soft_cap: Optional[float] = None,
+        logits_soft_cap: float | None = None,
         attn_type: AttentionType = AttentionType.DECODER,
         **kwargs,
     ) -> None:
-        if sliding_window is not None:
+        if attn_type != AttentionType.DECODER:
             raise NotImplementedError(
-                "DeterministicAttention does not yet support sliding window."
+                f"DeterministicAttention only supports decoder attention; "
+                f"got attn_type={attn_type!r}."
+            )
+        if kv_cache_dtype not in ("auto", "fp16", "bf16"):
+            raise NotImplementedError(
+                f"DeterministicAttention does not support kv_cache_dtype="
+                f"{kv_cache_dtype!r}; supported: auto, fp16, bf16."
             )
 
         cfg = get_runtime_config()
@@ -95,17 +100,22 @@ class DeterministicAttentionImpl(AttentionImpl):
         self.num_kv_groups = num_heads // num_kv_heads
         self.kv_cache_dtype = kv_cache_dtype
         self.blocktable_size = blocktable_size
-        self.logits_soft_cap = logits_soft_cap
+        # logits_soft_cap=None / 0 / negative all mean "off"; the kernel
+        # treats LOGIT_SOFTCAP > 0.0 as the activation condition.
+        self.logits_soft_cap = float(logits_soft_cap) if logits_soft_cap else 0.0
+        self.window_size = int(sliding_window) if sliding_window else 0
         self.attn_type = attn_type
         self.frac_bits = cfg.frac_bits
         self.fxp_dtype = fixed_tl_dtype(cfg.fxp_int_bits)
 
         if alibi_slopes is not None:
-            slopes = torch.tensor(alibi_slopes, dtype=torch.float32)
-            assert slopes.shape == (num_heads,), (
-                f"alibi_slopes shape {tuple(slopes.shape)} != (num_heads={num_heads},)"
-            )
-            self.alibi_slopes: Optional[torch.Tensor] = slopes
+            slopes = torch.tensor(alibi_slopes, dtype=torch.float32) * RCP_LN2
+            assert slopes.shape == (
+                num_heads,
+            ), f"alibi_slopes shape {tuple(slopes.shape)} != (num_heads={num_heads},)"
+            # Pre-scaled by RCP_LN2 once at construction; the launcher will
+            # not re-multiply on every forward.
+            self.alibi_slopes: torch.Tensor | None = slopes
         else:
             self.alibi_slopes = None
 
@@ -116,10 +126,10 @@ class DeterministicAttentionImpl(AttentionImpl):
         key: torch.Tensor,
         value: torch.Tensor,
         kv_cache: torch.Tensor,
-        attn_metadata: Optional[AttentionMetadata],
-        output: Optional[torch.Tensor] = None,
-        output_scale: Optional[torch.Tensor] = None,
-        output_block_scale: Optional[torch.Tensor] = None,
+        attn_metadata: AttentionMetadata | None,
+        output: torch.Tensor | None = None,
+        output_scale: torch.Tensor | None = None,
+        output_block_scale: torch.Tensor | None = None,
         **kwargs,
     ) -> torch.Tensor:
         """Run deterministic attention for one layer on a packed batch.
@@ -174,6 +184,8 @@ class DeterministicAttentionImpl(AttentionImpl):
             softmax_scale=self.scale,
             frac_bits=self.frac_bits,
             fxp_dtype=self.fxp_dtype,
+            logits_soft_cap=self.logits_soft_cap,
+            window_size=self.window_size,
         )
 
         return output.view(num_tokens, self.num_heads * self.head_size)
@@ -188,7 +200,7 @@ class DeterministicAttentionImpl(AttentionImpl):
     ) -> None:
         """Write new K/V tokens into the paged KV cache.
 
-        kv_cache layout is ``(num_blocks, 2, block_size, num_kv_heads, head_size)``
+        kv_cache layout is (num_blocks, 2, block_size, num_kv_heads, head_size)
         so K/V are unbound along dim 1.
         """
         if self.attn_type in (AttentionType.ENCODER_ONLY, AttentionType.ENCODER):
@@ -208,5 +220,3 @@ class DeterministicAttentionImpl(AttentionImpl):
             layer._k_scale,
             layer._v_scale,
         )
-
-

@@ -12,20 +12,36 @@ def rms_norm_fxp_kernel(
     X_ptr,
     W_ptr,
     Y_ptr,
+    Residual_ptr,
     stride_x,
     hidden_size,
     eps: tl.constexpr,
     BLOCK: tl.constexpr,
     FRAC_BITS: tl.constexpr,
     FXP_DTYPE: tl.constexpr,
+    HAS_RESIDUAL: tl.constexpr,
 ):
-    """One program per row.  BLOCK >= hidden_size (power-of-two)."""
+    """One program per row.  BLOCK >= hidden_size (power-of-two).
+
+    When HAS_RESIDUAL is true, the kernel reads Residual_ptr of the
+    same shape as X, computes x = x + residual in fp32, writes the new
+    residual back through Residual_ptr, and uses the summed value for the
+    norm. The fp32 add is bitwise reproducible per program, so determinism is
+    preserved.
+    """
     row = tl.program_id(0)
     cols = tl.arange(0, BLOCK)
     mask = cols < hidden_size
 
     x = tl.load(X_ptr + row * stride_x + cols, mask=mask, other=0.0).to(tl.float32)
     w = tl.load(W_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+
+    if HAS_RESIDUAL:
+        r = tl.load(Residual_ptr + row * stride_x + cols, mask=mask, other=0.0).to(
+            tl.float32
+        )
+        x = x + r
+        tl.store(Residual_ptr + row * stride_x + cols, x, mask=mask)
 
     x_sq = x * x
 

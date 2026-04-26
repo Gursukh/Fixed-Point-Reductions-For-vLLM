@@ -1,8 +1,7 @@
 import pytest
 import torch
 
-from tests.fixed_point_helpers import requires_cuda
-from fxpr_vllm.fixed_point_kernels.gemm import launch_gemm_fxp
+from tests.fixed_point_helpers import gemm_fxp_test, requires_cuda
 
 
 def _ordered_fp16_dot(
@@ -32,12 +31,12 @@ def test_gemm_fixed_point_correctness(M, N, K):
     a = torch.randn((M, K), device="cuda", dtype=torch.float32, generator=g)
     b = torch.randn((K, N), device="cuda", dtype=torch.float32, generator=g)
 
-    got = launch_gemm_fxp(a, b)
+    got = gemm_fxp_test(a, b)
     ref = torch.matmul(a, b)
 
-    assert torch.allclose(got, ref, atol=5e-4, rtol=5e-4), (
-        f"max error = {(got - ref).abs().max().item()}"
-    )
+    assert torch.allclose(
+        got, ref, atol=5e-4, rtol=5e-4
+    ), f"max error = {(got - ref).abs().max().item()}"
 
 
 @requires_cuda
@@ -48,12 +47,12 @@ def test_gemm_matches_torch():
     a = torch.randn((8, 16), device="cuda", dtype=torch.float32, generator=g)
     b = torch.randn((16, 8), device="cuda", dtype=torch.float32, generator=g)
 
-    got = launch_gemm_fxp(a, b)
+    got = gemm_fxp_test(a, b)
     ref = torch.matmul(a, b)
 
-    assert torch.allclose(got, ref, atol=5e-4, rtol=5e-4), (
-        f"max error = {(got - ref).abs().max().item()}"
-    )
+    assert torch.allclose(
+        got, ref, atol=5e-4, rtol=5e-4
+    ), f"max error = {(got - ref).abs().max().item()}"
 
 
 @requires_cuda
@@ -64,7 +63,7 @@ def test_gemm_identity():
     a = torch.randn((4, K), device="cuda", dtype=torch.float32, generator=g)
     eye = torch.eye(K, device="cuda", dtype=torch.float32)
 
-    got = launch_gemm_fxp(a, eye)
+    got = gemm_fxp_test(a, eye)
     assert torch.allclose(got, a, atol=1e-4)
 
 
@@ -74,7 +73,7 @@ def test_gemm_zero_matrix():
     a = torch.ones((4, 16), device="cuda", dtype=torch.float32)
     b = torch.zeros((16, 4), device="cuda", dtype=torch.float32)
 
-    got = launch_gemm_fxp(a, b)
+    got = gemm_fxp_test(a, b)
     assert torch.equal(got, torch.zeros((4, 4), device="cuda", dtype=torch.float32))
 
 
@@ -85,7 +84,7 @@ def test_gemm_single_row_col():
     a = torch.randn((1, 16), device="cuda", dtype=torch.float32, generator=g)
     b = torch.randn((16, 1), device="cuda", dtype=torch.float32, generator=g)
 
-    got = launch_gemm_fxp(a, b)
+    got = gemm_fxp_test(a, b)
     ref = torch.matmul(a, b)
     assert torch.allclose(got, ref, atol=5e-4)
 
@@ -97,7 +96,7 @@ def test_gemm_non_square():
     a = torch.randn((2, 16), device="cuda", dtype=torch.float32, generator=g)
     b = torch.randn((16, 3), device="cuda", dtype=torch.float32, generator=g)
 
-    got = launch_gemm_fxp(a, b)
+    got = gemm_fxp_test(a, b)
     ref = torch.matmul(a, b)
     assert got.shape == ref.shape
     assert torch.allclose(got, ref, atol=5e-4, rtol=5e-4)
@@ -120,9 +119,9 @@ def test_gemm_associativity_fixed_vs_float16():
     a_row_rev = list(reversed(a_row))
     b_col_rev = list(reversed(b_col))
     fp16_rev = _ordered_fp16_dot([a_row_rev], [b_col_rev])
-    assert fp16_fwd.item() != fp16_rev.item(), (
-        "fp16 sums should differ with reversed order"
-    )
+    assert (
+        fp16_fwd.item() != fp16_rev.item()
+    ), "fp16 sums should differ with reversed order"
 
     a_fwd = torch.tensor([a_row], device="cuda", dtype=torch.float32)
     b_fwd = torch.tensor([[v] for v in b_col], device="cuda", dtype=torch.float32)
@@ -131,12 +130,12 @@ def test_gemm_associativity_fixed_vs_float16():
     a_rev = a_fwd[:, perm]
     b_rev = b_fwd[perm, :]
 
-    c_fwd = launch_gemm_fxp(a_fwd, b_fwd)
-    c_rev = launch_gemm_fxp(a_rev, b_rev)
+    c_fwd = gemm_fxp_test(a_fwd, b_fwd)
+    c_rev = gemm_fxp_test(a_rev, b_rev)
 
-    assert torch.equal(c_fwd, c_rev), (
-        f"Fixed-point GEMM should be order-invariant, got {c_fwd.item()} vs {c_rev.item()}"
-    )
+    assert torch.equal(
+        c_fwd, c_rev
+    ), f"Fixed-point GEMM should be order-invariant, got {c_fwd.item()} vs {c_rev.item()}"
 
 
 @requires_cuda
@@ -159,12 +158,12 @@ def test_gemm_element_permutation_invariance():
     a_perm = a[:, perm]
     b_perm = b[perm, :]
 
-    c_orig = launch_gemm_fxp(a, b)
-    c_perm = launch_gemm_fxp(a_perm, b_perm)
+    c_orig = gemm_fxp_test(a, b)
+    c_perm = gemm_fxp_test(a_perm, b_perm)
 
-    assert torch.equal(c_orig, c_perm), (
-        f"max diff = {(c_orig - c_perm).abs().max().item()}"
-    )
+    assert torch.equal(
+        c_orig, c_perm
+    ), f"max diff = {(c_orig - c_perm).abs().max().item()}"
 
 
 @requires_cuda
@@ -174,6 +173,6 @@ def test_gemm_deterministic_across_runs():
     a = torch.randn((8, 32), device="cuda", dtype=torch.float32, generator=g)
     b = torch.randn((32, 8), device="cuda", dtype=torch.float32, generator=g)
 
-    results = [launch_gemm_fxp(a, b) for _ in range(5)]
+    results = [gemm_fxp_test(a, b) for _ in range(5)]
     for r in results[1:]:
         assert torch.equal(results[0], r)
