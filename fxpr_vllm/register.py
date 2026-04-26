@@ -112,6 +112,8 @@ def register() -> None:
         cfg.fxp_int_bits,
     )
 
+    from . import library_ops  # noqa: F401
+
     try:
         _register_rms_norm()
         logger.info("RMSNorm registered")

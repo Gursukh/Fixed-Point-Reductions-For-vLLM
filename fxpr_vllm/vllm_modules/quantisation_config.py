@@ -15,7 +15,7 @@ from vllm.model_executor.parameter import ModelWeightParameter
 from vllm.model_executor.layers.quantization import register_quantization_config
 
 from ..fixed_point_kernels.fixed_point import fixed_tl_dtype
-from ..fixed_point_kernels.gemm import launch_gemm_fxp
+from ..library_ops import gemm_fxp as gemm_fxp_op
 from .config import DEFAULT_FRAC_BITS, get_runtime_config
 
 logger = logging.getLogger("fxpr_vllm")
@@ -196,10 +196,8 @@ class FixedPointLinearMethod(QuantizeMethodBase):
             x2d = x2d.to(w_t.dtype)
         x2d = x2d.contiguous()
 
-        fxp_dtype = fixed_tl_dtype(get_runtime_config().fxp_int_bits)
-        out = launch_gemm_fxp(
-            x2d, w_t, frac_bits=self.config.frac_bits, fxp_dtype=fxp_dtype
-        )
+        fxp_int_bits = get_runtime_config().fxp_int_bits
+        out = gemm_fxp_op(x2d, w_t, self.config.frac_bits, fxp_int_bits)
         out = out.view(*x.shape[:-1], out.shape[-1])
 
         if bias is not None:
