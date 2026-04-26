@@ -6,11 +6,31 @@ from .fixed_point import fixed_to_float, float_to_fixed
 
 @triton.jit
 def dot_chunk_fxp(a, b, FRAC_BITS: tl.constexpr, FXP_DTYPE: tl.constexpr):
-    # Iterate over the shared dimension (D = a.shape[1]) one element at a time.
-    # The old approach (a[:,:,None] * b[None,:,:]) created an [M,D,N] intermediate
-    # that overflowed the register file and spilled to DRAM on every call.
-    # Here we use a compile-time select via tl.where to avoid the 3-D tensor;
-    # LLVM constant-folds the (arange==d) mask into a plain register move/zero.
+    # ============================================================
+    # TEMPORARY: tl.dot replacement for compile-time benchmarking.
+    # ============================================================
+    # tl.dot does an fp32 reduction inside the MMA *before* any quantization,
+    # so the K-sum is no longer order-invariant: changing the SM/warp/CTA
+    # layout can change the answer. This BREAKS the project's core invariant
+    # ("bitwise-identical regardless of how K is split"). Do not ship.
+    #
+    # Inputs must share dtype for tl.dot. We cast both to fp16 so tensor
+    # cores fire on Turing/Ampere; the gemm path loses fp32 mantissa bits
+    # relative to the scalar pattern but the integer accumulator pulls the
+    # final result back onto a fixed grid for the GEMM-shape tests.
+    out_fp = tl.dot(a.to(tl.float16), b.to(tl.float16), out_dtype=tl.float32)
+    return float_to_fixed(out_fp, FRAC_BITS, FXP_DTYPE)
+
+
+@triton.jit
+def _dot_chunk_fxp_scalar(a, b, FRAC_BITS: tl.constexpr, FXP_DTYPE: tl.constexpr):
+    """Determinism-preserving scalar pattern (the real version).
+
+    Iterates over the shared dimension D one element at a time, quantising
+    each per-element product before accumulating in an integer. Restored by
+    swapping ``dot_chunk_fxp`` to point here when the ``tl.dot`` experiment
+    above is removed.
+    """
     D: tl.constexpr = a.shape[1]
     M: tl.constexpr = a.shape[0]
     N: tl.constexpr = b.shape[1]
@@ -22,7 +42,6 @@ def dot_chunk_fxp(a, b, FRAC_BITS: tl.constexpr, FXP_DTYPE: tl.constexpr):
         outer = a_col[:, None] * b_row[None, :]  # [M, N]
         acc += float_to_fixed(outer, FRAC_BITS, FXP_DTYPE)
     return acc
-
 
 @triton.jit
 def paged_kv_location(
