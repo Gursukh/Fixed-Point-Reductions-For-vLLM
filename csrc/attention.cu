@@ -114,12 +114,12 @@ __device__ __forceinline__ const T* paged_kv_row(
       + kv_head * stride_head;
 }
 
-template <typename FxpInt>
+template <typename FxpInt, typename IOFloat>
 __global__ void unified_attention_kernel(
-    const float* __restrict__ Q,                    // (T, H, D)
-    const float* __restrict__ K_cache,              // (B, page_size, H_kv, D)
-    const float* __restrict__ V_cache,              // (B, page_size, H_kv, D)
-    float*       __restrict__ O,                    // (T, H, D)
+    const IOFloat* __restrict__ Q,                  // (T, H, D)
+    const IOFloat* __restrict__ K_cache,            // (B, page_size, H_kv, D)
+    const IOFloat* __restrict__ V_cache,            // (B, page_size, H_kv, D)
+    float*         __restrict__ O,                  // (T, H, D), fp32
     const int*   __restrict__ query_start_loc,      // (R+1,)
     const int*   __restrict__ seq_lens,             // (R,)
     const int*   __restrict__ block_table,          // (R, max_logical_blocks)
@@ -172,8 +172,8 @@ __global__ void unified_attention_kernel(
   const float alibi_slope =
       alibi_slopes != nullptr ? alibi_slopes[head_index] : 0.0f;
 
-  const float* q_row = Q + q_token_idx * stride_q_token + head_index * stride_q_head;
-  const int*   bt_row = block_table + request_index * stride_block_table_row;
+  const IOFloat* q_row = Q + q_token_idx * stride_q_token + head_index * stride_q_head;
+  const int*     bt_row = block_table + request_index * stride_block_table_row;
 
   // Shared buffers (sized for max threads). Final two scalars are the
   // single-row reductions.
@@ -186,16 +186,17 @@ __global__ void unified_attention_kernel(
   // ============================================================
   float partial_row_max = -INFINITY;
   for (int kp = key_start; kp < key_end; ++kp) {
-    const float* k_row = paged_kv_row(
+    const IOFloat* k_row = paged_kv_row<IOFloat>(
         K_cache, bt_row, kp, page_size, kv_head_index,
         stride_k_block, stride_k_slot, stride_k_head);
 
     // qk dot in fxp: each thread accumulates products for its
-    // strided slice of head_dim.
+    // strided slice of head_dim. Q / K are loaded in their native
+    // dtype and widened to fp32 element-wise (single op, deterministic).
     FxpInt partial = 0;
     for (int d = tid; d < head_dim; d += nthreads) {
-      const float qd = q_row[d];
-      const float kd = k_row[d];
+      const float qd = static_cast<float>(q_row[d]);
+      const float kd = static_cast<float>(k_row[d]);
       const float prod = __fmul_rn(qd, kd);
       partial += float_to_fixed<FxpInt>(prod, frac_bits);
     }
@@ -245,18 +246,18 @@ __global__ void unified_attention_kernel(
   FxpInt denom_partial = 0;
 
   for (int kp = key_start; kp < key_end; ++kp) {
-    const float* k_row = paged_kv_row(
+    const IOFloat* k_row = paged_kv_row<IOFloat>(
         K_cache, bt_row, kp, page_size, kv_head_index,
         stride_k_block, stride_k_slot, stride_k_head);
-    const float* v_row = paged_kv_row(
+    const IOFloat* v_row = paged_kv_row<IOFloat>(
         V_cache, bt_row, kp, page_size, kv_head_index,
         stride_v_block, stride_v_slot, stride_v_head);
 
     // Recompute qk_fxp identically to pass 1 (deterministic).
     FxpInt qk_fxp_partial = 0;
     for (int d = tid; d < head_dim; d += nthreads) {
-      const float qd = q_row[d];
-      const float kd = k_row[d];
+      const float qd = static_cast<float>(q_row[d]);
+      const float kd = static_cast<float>(k_row[d]);
       const float prod = __fmul_rn(qd, kd);
       qk_fxp_partial += float_to_fixed<FxpInt>(prod, frac_bits);
     }
@@ -286,7 +287,7 @@ __global__ void unified_attention_kernel(
     // Output accumulator: each thread covers its slice of head_dim.
     int local_idx = 0;
     for (int d = tid; d < head_dim; d += nthreads) {
-      const float vd = v_row[d];
+      const float vd = static_cast<float>(v_row[d]);
       const float prod = __fmul_rn(weight, vd);
       out_acc[local_idx] += float_to_fixed<FxpInt>(prod, frac_bits);
       ++local_idx;
@@ -312,8 +313,8 @@ __global__ void unified_attention_kernel(
   }
 }
 
-template <typename FxpInt>
-void launch_attention(
+template <typename FxpInt, typename IOFloat>
+void launch_attention_typed(
     const at::Tensor& q,
     const at::Tensor& k_cache,
     const at::Tensor& v_cache,
@@ -335,7 +336,6 @@ void launch_attention(
     int num_requests) {
   if (num_requests == 0) return;
 
-  // Threads = nearest pow2 above head_dim, cap at kMaxThreads.
   int threads = 32;
   while (threads < head_dim && threads < kMaxThreads) threads <<= 1;
   if (threads > kMaxThreads) threads = kMaxThreads;
@@ -343,10 +343,10 @@ void launch_attention(
   dim3 grid(num_requests, max_query_len, num_heads);
 
   auto stream = at::cuda::getCurrentCUDAStream();
-  unified_attention_kernel<FxpInt><<<grid, threads, 0, stream>>>(
-      q.data_ptr<float>(),
-      k_cache.data_ptr<float>(),
-      v_cache.data_ptr<float>(),
+  unified_attention_kernel<FxpInt, IOFloat><<<grid, threads, 0, stream>>>(
+      q.data_ptr<IOFloat>(),
+      k_cache.data_ptr<IOFloat>(),
+      v_cache.data_ptr<IOFloat>(),
       o.data_ptr<float>(),
       query_start_loc.data_ptr<int>(),
       seq_lens.data_ptr<int>(),
@@ -363,6 +363,55 @@ void launch_attention(
       window_size,
       is_causal,
       frac_bits);
+}
+
+template <typename FxpInt>
+void launch_attention(
+    const at::Tensor& q,
+    const at::Tensor& k_cache,
+    const at::Tensor& v_cache,
+    at::Tensor& o,
+    const at::Tensor& query_start_loc,
+    const at::Tensor& seq_lens,
+    const at::Tensor& block_table,
+    const at::Tensor* alibi_slopes,
+    int num_heads,
+    int num_kv_heads,
+    int head_dim,
+    int page_size,
+    float softmax_scale_log2,
+    float logit_softcap,
+    int window_size,
+    bool is_causal,
+    int frac_bits,
+    int max_query_len,
+    int num_requests) {
+  switch (q.scalar_type()) {
+    case at::kFloat:
+      launch_attention_typed<FxpInt, float>(
+          q, k_cache, v_cache, o, query_start_loc, seq_lens, block_table,
+          alibi_slopes, num_heads, num_kv_heads, head_dim, page_size,
+          softmax_scale_log2, logit_softcap, window_size, is_causal,
+          frac_bits, max_query_len, num_requests);
+      break;
+    case at::kHalf:
+      launch_attention_typed<FxpInt, at::Half>(
+          q, k_cache, v_cache, o, query_start_loc, seq_lens, block_table,
+          alibi_slopes, num_heads, num_kv_heads, head_dim, page_size,
+          softmax_scale_log2, logit_softcap, window_size, is_causal,
+          frac_bits, max_query_len, num_requests);
+      break;
+    case at::kBFloat16:
+      launch_attention_typed<FxpInt, at::BFloat16>(
+          q, k_cache, v_cache, o, query_start_loc, seq_lens, block_table,
+          alibi_slopes, num_heads, num_kv_heads, head_dim, page_size,
+          softmax_scale_log2, logit_softcap, window_size, is_causal,
+          frac_bits, max_query_len, num_requests);
+      break;
+    default:
+      TORCH_CHECK(false, "unified_attention_fxp: unsupported q dtype ",
+                  q.scalar_type());
+  }
 }
 
 }  // namespace
@@ -386,17 +435,22 @@ void unified_attention_fxp_op(
               "unified_attention_fxp: all tensors must be CUDA");
   TORCH_CHECK(kv_cache.dim() == 5 && kv_cache.size(1) == 2,
               "kv_cache must be (num_blocks, 2, page_size, num_kv_heads, head_dim)");
-  TORCH_CHECK(q.scalar_type() == at::kFloat, "q must be float32");
-  TORCH_CHECK(kv_cache.scalar_type() == at::kFloat, "kv_cache must be float32");
+  TORCH_CHECK(
+      q.scalar_type() == at::kFloat || q.scalar_type() == at::kHalf ||
+          q.scalar_type() == at::kBFloat16,
+      "q dtype must be float32 / float16 / bfloat16");
+  TORCH_CHECK(kv_cache.scalar_type() == q.scalar_type(),
+              "kv_cache dtype must match q dtype");
   TORCH_CHECK(o.scalar_type() == at::kFloat, "o must be float32");
   TORCH_CHECK(fxp_int_bits == 16 || fxp_int_bits == 32 || fxp_int_bits == 64,
               "fxp_int_bits must be 16/32/64");
 
   const c10::cuda::CUDAGuard device_guard(q.device());
 
-  // Split kv into K, V views.
-  auto k_cache = kv_cache.select(1, 0).contiguous();
-  auto v_cache = kv_cache.select(1, 1).contiguous();
+  // Split kv into K, V views. No .contiguous() — the kernel uses
+  // explicit strides, and copying the full cache would double HBM use.
+  auto k_cache = kv_cache.select(1, 0);
+  auto v_cache = kv_cache.select(1, 1);
 
   const int num_heads = q.size(1);
   const int head_dim = q.size(2);

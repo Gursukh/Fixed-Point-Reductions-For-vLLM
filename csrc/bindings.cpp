@@ -1,7 +1,16 @@
 // Top-level torch.library registrations for the fxpr namespace.
-// Forward declarations live in their respective .cu files; the
-// TORCH_LIBRARY block at the bottom mirrors the op surface that
-// fxpr_vllm/library_ops.py rebinds onto torch.ops.fxpr.*.
+//
+// Schema and CUDA implementation are registered separately:
+//   * TORCH_LIBRARY(fxpr, m)       — declares schemas (Tensor in, Tensor out).
+//   * TORCH_LIBRARY_IMPL(fxpr, CUDA, m) — binds each schema's CUDA backend.
+//
+// This split is required so that fxpr_vllm/library_ops.py can register
+// fake (meta) implementations via torch.library.register_fake. If we
+// used the m.def("schema", &fn) shortcut instead, the implementation
+// would land under the CompositeImplicitAutograd dispatch key and
+// register_fake would refuse with "the operator already has an
+// implementation for this device type via a pre-existing registration
+// to DispatchKey::CompositeImplicitAutograd".
 
 #include <torch/library.h>
 #include <torch/extension.h>
@@ -38,38 +47,41 @@ void unified_attention_fxp_op(torch::Tensor q, torch::Tensor kv_cache,
 }  // namespace fxpr
 
 TORCH_LIBRARY(fxpr, m) {
-  m.def("float_to_fixed(Tensor x, int frac_bits, int int_bits) -> Tensor",
-        &fxpr::float_to_fixed_op);
-  m.def("fixed_to_float(Tensor x, int frac_bits, int float_bits) -> Tensor",
-        &fxpr::fixed_to_float_op);
+  m.def("float_to_fixed(Tensor x, int frac_bits, int int_bits) -> Tensor");
+  m.def("fixed_to_float(Tensor x, int frac_bits, int float_bits) -> Tensor");
   m.def(
       "rms_norm_fxp(Tensor x, Tensor weight_fp32, float eps, int frac_bits, "
-      "int fxp_int_bits) -> Tensor",
-      &fxpr::rms_norm_fxp_op);
+      "int fxp_int_bits) -> Tensor");
   m.def(
       "rms_norm_fxp_residual(Tensor x, Tensor(a!) residual, Tensor weight_fp32, "
-      "float eps, int frac_bits, int fxp_int_bits) -> Tensor",
-      &fxpr::rms_norm_fxp_residual_op);
+      "float eps, int frac_bits, int fxp_int_bits) -> Tensor");
   m.def(
-      "log_softmax_fxp(Tensor x, int frac_bits, int fxp_int_bits) -> Tensor",
-      &fxpr::log_softmax_fxp_op);
+      "log_softmax_fxp(Tensor x, int frac_bits, int fxp_int_bits) -> Tensor");
   m.def(
-      "compute_per_row_scale(Tensor x, float eps) -> Tensor",
-      &fxpr::compute_per_row_scale_op);
+      "compute_per_row_scale(Tensor x, float eps) -> Tensor");
   m.def(
-      "gemm_fxp(Tensor a, Tensor b, int frac_bits, int fxp_int_bits) -> Tensor",
-      &fxpr::gemm_fxp_op);
+      "gemm_fxp(Tensor a, Tensor b, int frac_bits, int fxp_int_bits) -> Tensor");
   m.def(
       "gemm_fxp_int8(Tensor a_int8, Tensor a_scale, Tensor b_int8, "
-      "Tensor b_scale, int frac_bits, int fxp_int_bits) -> Tensor",
-      &fxpr::gemm_fxp_int8_op);
+      "Tensor b_scale, int frac_bits, int fxp_int_bits) -> Tensor");
   m.def(
       "unified_attention_fxp(Tensor q, Tensor kv_cache, Tensor(a!) o, "
       "Tensor query_start_loc, Tensor seq_lens, Tensor block_table, "
       "int max_query_len, Tensor? alibi_slopes, bool is_causal, "
       "float? softmax_scale, int frac_bits, int fxp_int_bits, "
-      "float logit_softcap, int window_size) -> ()",
-      &fxpr::unified_attention_fxp_op);
+      "float logit_softcap, int window_size) -> ()");
+}
+
+TORCH_LIBRARY_IMPL(fxpr, CUDA, m) {
+  m.impl("float_to_fixed", &fxpr::float_to_fixed_op);
+  m.impl("fixed_to_float", &fxpr::fixed_to_float_op);
+  m.impl("rms_norm_fxp", &fxpr::rms_norm_fxp_op);
+  m.impl("rms_norm_fxp_residual", &fxpr::rms_norm_fxp_residual_op);
+  m.impl("log_softmax_fxp", &fxpr::log_softmax_fxp_op);
+  m.impl("compute_per_row_scale", &fxpr::compute_per_row_scale_op);
+  m.impl("gemm_fxp", &fxpr::gemm_fxp_op);
+  m.impl("gemm_fxp_int8", &fxpr::gemm_fxp_int8_op);
+  m.impl("unified_attention_fxp", &fxpr::unified_attention_fxp_op);
 }
 
 // Empty pybind module so `import fxpr_vllm._cuda` succeeds. The real

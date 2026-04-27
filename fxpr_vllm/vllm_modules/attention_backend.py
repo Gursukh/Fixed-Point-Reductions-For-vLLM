@@ -180,11 +180,14 @@ class DeterministicAttentionImpl(AttentionImpl):
         block_table = attn_metadata.block_table
         max_query_len = int(attn_metadata.max_query_len)
 
-        # Kernel expects fp32 q + kv_cache. vLLM hands us bf16/fp16 in
-        # most configurations; widen here so the per-element fp32
-        # multiply path stays deterministic.
-        q_in = query if query.dtype == torch.float32 else query.to(torch.float32)
-        kv_in = kv_cache if kv_cache.dtype == torch.float32 else kv_cache.to(torch.float32)
+        # The kernel reads Q / KV in their native dtype (fp32/fp16/bf16)
+        # and widens to fp32 element-wise inside, so we never copy the
+        # KV cache. Q and KV must share dtype; if they don't (rare),
+        # widen Q only — that tensor is small.
+        if query.dtype != kv_cache.dtype:
+            q_in = query.to(kv_cache.dtype)
+        else:
+            q_in = query
         out_fp32 = (
             output if output.dtype == torch.float32
             else torch.empty_like(output, dtype=torch.float32)
@@ -192,7 +195,7 @@ class DeterministicAttentionImpl(AttentionImpl):
 
         torch.ops.fxpr.unified_attention_fxp(
             q_in,
-            kv_in,
+            kv_cache,
             out_fp32,
             query_start_loc,
             seq_lens,
