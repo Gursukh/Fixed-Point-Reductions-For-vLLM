@@ -111,23 +111,3 @@ def float_to_fixed(
 @triton.jit
 def fixed_to_float(x, INV_SCALE: tl.constexpr):
     return x.to(tl.float32) * INV_SCALE
-
-
-@triton.jit
-def fxp_rescale(
-    acc_int,
-    alpha,
-    QMIN: tl.constexpr,
-    QMAX: tl.constexpr,
-    INT_DTYPE: tl.constexpr,
-):
-    """Multiply an already-scaled fxp integer by fp32 alpha and round back to
-    int (online-softmax rescale). Skips the SCALE multiply float_to_fixed does."""
-    scaled = acc_int.to(tl.float32) * alpha
-    if INT_DTYPE == tl.int32:
-        return _cvt_rni_sat_s32_f32(scaled)
-    elif INT_DTYPE == tl.int16:
-        return _cvt_rni_sat_s16_f32(scaled)
-    else:
-        clamped = tl.minimum(tl.maximum(scaled, QMIN), QMAX)
-        return _cvt_rni_s64_f32(clamped)

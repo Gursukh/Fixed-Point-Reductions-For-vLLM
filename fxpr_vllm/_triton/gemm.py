@@ -36,27 +36,17 @@ _TORCH_TO_TL_FLOAT = {
     torch.bfloat16: tl.bfloat16,
 }
 
-# Configs are picked by shape, not autotuned, so a shape always gets the same
-# mma sequence. Tuple is (BLOCK_M, BLOCK_N, GROUP_SIZE_M, num_warps, num_stages).
-# Only BLOCK_K affects numerics, so BM/BN/num_stages are tuned freely; BM, BN
-# stay >= 16 to keep tl.dot on tensor cores. BN=64, num_stages=2 keep the
-# BLOCK_K=128 tiles inside the ~100 KB shared-memory budget on Ada/L4 (bf16:
-# 2 * (128*128 + 128*64) * 2 B = 96 KB).
-_CFG_DEFAULT = (128, 64, 8, 8, 2)    # activation matmuls, M and N both large
-_CFG_MID_M = (32, 128, 8, 4, 2)      # decode 17..64; BM=128 would mask 50-75%
-                                     # of rows and still pay their FMAs.
-_CFG_SKINNY_M = (16, 128, 8, 4, 2)   # tiny M, big N, e.g. lm_head decode
-
-# Split-K config. Smaller (BM, BN) and fewer warps than _CFG_DEFAULT to cut
-# register pressure - on Blackwell the old (128, 64, 8 warps) hit 172 reg/thread
-# and 1 block/SM (16.6% occupancy). Atomic-add latency hiding wants higher
-# occupancy; 4 stages let the compiler pipeline the cp.async loads.
+# Split-K config: the fixed tiling the split-K kernel always runs with. Tuple is
+# (BLOCK_M, BLOCK_N, GROUP_SIZE_M, num_warps, num_stages); only BLOCK_K affects
+# numerics, so BM/BN/num_stages are tuned freely (BM, BN >= 16 to keep tl.dot on
+# tensor cores). Smaller (BM, BN) and fewer warps than the persistent path's
+# autotuned configs to cut register pressure - on Blackwell the old
+# (128, 64, 8 warps) hit 172 reg/thread and 1 block/SM (16.6% occupancy).
+# Atomic-add latency hiding wants higher occupancy; 4 stages let the compiler
+# pipeline the cp.async loads.
 _CFG_SPLITK = (64, 64, 8, 4, 4)
 
 _BLOCKS_PER_SM = 2
-
-# Cap on split-K; beyond this, atomic contention and zero-init stop paying off.
-_MAX_SPLIT_K = 16
 
 # Persistent split-K scratch, reused across calls. c_int <= target_programs *
 # 128*128 ints; the epilogue self-zeroes it.
@@ -579,16 +569,6 @@ _gemm_kernel_autotuned = triton.autotune(
 # and is pure overhead once warmed (same Config wins every time). Safe because
 # Triton's per-signature compiled-kernel cache absorbs the re-dispatch.
 _PICKED_CONFIG: dict[tuple[int, int, int, torch.dtype], triton.Config] = {}
-
-
-def dump_picked_configs() -> list[tuple[tuple[int, int, int, torch.dtype], triton.Config]]:
-    """Every (key, picked Config) pair the autotuner has resolved, sorted by
-    key. For bench/diagnostic scripts: after a warmup pass over every shape,
-    this is the record of which Config won per (M_bucket, N, K, dtype)."""
-    return sorted(
-        _PICKED_CONFIG.items(),
-        key=lambda kv: (kv[0][0], kv[0][1], kv[0][2], str(kv[0][3])),
-    )
 
 
 def _extract_picked_config(m_bucket: int, N: int, K: int) -> triton.Config | None:
