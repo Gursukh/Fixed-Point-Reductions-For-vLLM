@@ -1,6 +1,6 @@
 """Batch-invariant RMSNorm: one program per row, chunked over hidden.
 
-Grid is (batch,) and never specialises on batch size, so each row reduces in a
+Grid is (batch,) and never specializes on batch size, so each row reduces in a
 fixed order. Sum stays fp32; fixed-point x*x overflowed on real activations.
 """
 
@@ -35,8 +35,8 @@ def _rms_norm_kernel(
     if HAS_RESIDUAL:
         r_row = r_ptr + row * stride_x
 
-    # Sum of squares in fp32. One program owns the row, so reduction order is
-    # fixed and the result is bit-identical per batch.
+    # Sum of squares in fp32. One program owns the row, so the reduction order
+    # is fixed and the result is bit-identical regardless of batch.
     acc = tl.zeros((), dtype=tl.float32)
     for off in range(0, hidden, BLOCK_N):
         cols = off + tl.arange(0, BLOCK_N)
@@ -119,7 +119,7 @@ def _common_launch(
         x_2d,
         w,
         y_2d,
-        # Triton needs a real tensor; only read under HAS_RESIDUAL.
+        # Triton needs a real tensor here; it is only read when HAS_RESIDUAL.
         r_storage if r_storage is not None else x_2d,
         x_2d.stride(0),
         hidden,

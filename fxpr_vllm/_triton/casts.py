@@ -1,4 +1,4 @@
-"""Elementwise float <-> fixed-point casts."""
+"""Elementwise float to/from fixed-point casts."""
 
 from __future__ import annotations
 
@@ -6,12 +6,15 @@ import torch
 import triton
 import triton.language as tl
 
-from .fxp import fxp_constants, float_to_fixed, fixed_to_float
+from .fxp import fxp_constants, float_to_fixed, fixed_to_float, exp2_saturating
 
 
 _BLOCK = 1024
 
-_SUPPORTED_FLOAT_DTYPES = (torch.float16, torch.float32, torch.float64)
+# bf16 is taken directly. The kernel upcasts to fp32 in-register before the cvt
+# (no bf16-to-int hardware convert exists anyway), and reading bf16 moves half
+# the bytes of an fp32 input on this bandwidth-bound op.
+_SUPPORTED_FLOAT_DTYPES = (torch.float16, torch.bfloat16, torch.float32, torch.float64)
 _SUPPORTED_INT_DTYPES = (torch.int16, torch.int32, torch.int64)
 
 _FLOAT_BITS_TO_TL = {16: tl.float16, 32: tl.float32, 64: tl.float64}
@@ -101,10 +104,10 @@ def fixed_to_float_run(
         )
     if float_bits not in _FLOAT_BITS_TO_TL:
         raise ValueError(f"float_bits must be 16/32/64, got {float_bits}")
-    if not (0 <= fxp_frac_bits < 64):
-        raise ValueError(f"fxp_frac_bits must satisfy 0 <= N < 64, got {fxp_frac_bits}")
 
-    inv_scale = 1.0 / float(1 << fxp_frac_bits)
+    # frac_bits is unbounded for benchmarking (see fxp_constants).
+    # exp2_saturating(-N) gives 2**-N without the `1 << N` domain error.
+    inv_scale = exp2_saturating(-fxp_frac_bits)
     tl_out_dtype = _FLOAT_BITS_TO_TL[float_bits]
     torch_out_dtype = _FLOAT_BITS_TO_TORCH[float_bits]
 

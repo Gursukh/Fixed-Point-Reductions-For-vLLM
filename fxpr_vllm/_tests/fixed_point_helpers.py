@@ -40,7 +40,7 @@ requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs 
 
 
 def gemm_dtype_supported(dtype: torch.dtype) -> bool:
-    """fp16 needs sm_75+, bf16/fp32 need sm_80+."""
+    """fp16 needs sm_75 or newer, bf16/fp32 need sm_80 or newer."""
     if not torch.cuda.is_available():
         return False
     cap_major, cap_minor = torch.cuda.get_device_capability()
@@ -93,7 +93,7 @@ def prefill_fxp_test(
     fxp_int_bits: int = 32,
     fxp_frac_bits: int = DEFAULT_FXP_FRAC_BITS,
 ) -> None:
-    # page_size=1: one block per token.
+    # page_size 1, so one block per token.
     if alibi_slopes is not None:
         alibi_slopes = alibi_slopes * RCP_LN2
 

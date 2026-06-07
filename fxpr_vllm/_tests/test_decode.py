@@ -69,7 +69,7 @@ def _run_decode(q, kv_cache, query_start_loc, seq_lens, block_table, num_kv_spli
 @pytest.mark.parametrize("num_kv_splits", [1, 2, 4, 8])
 def test_decode_invariant_across_kv_splits(dtype, num_kv_splits):
     skip_if_dtype_unsupported(dtype)
-    # Seqs span several BLOCK_N tiles so the split actually divides the K range.
+    # Seqs span several BLOCK_N tiles so the split has something to divide.
     seq_lens = [160, 96]
     q, kv_cache, qsl, sl, bt = _build_decode_inputs(
         seq_lens, num_blocks_per_seq=10, dtype=dtype

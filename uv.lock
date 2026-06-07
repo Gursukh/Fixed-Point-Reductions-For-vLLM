@@ -1066,7 +1066,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "triton", specifier = ">=3.0" },
-    { name = "vllm", specifier = ">=0.20.1" },
+    { name = "vllm", specifier = "==0.20.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -4167,7 +4167,7 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.20.1"
+version = "0.20.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -4240,12 +4240,10 @@ dependencies = [
     { name = "watchfiles" },
     { name = "xgrammar", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/34/b4/32429ebde396149e5570c9a6b2e3b52dc47261d8b20465cc6ae36c4659fb/vllm-0.20.1.tar.gz", hash = "sha256:778df065237704d51e8b4cc95bcc6f6a0c2317f13feb38295de3ce76146bf140", size = 33519792, upload-time = "2026-05-03T08:24:43.794Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/23/4a5dc23600be07407835e404d06a2fcd587c8dcaebeab314b5c3593509ce/vllm-0.20.2.tar.gz", hash = "sha256:58809377798c5335c6e2fe30092abda54d9200b5b8a717b3735a63f5daa0e383", size = 33526607, upload-time = "2026-05-10T07:39:27.942Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/2a/4bee1ddd867895e63bcca4f4ad78048f6a5d96d0ea241cdb70657cce966e/vllm-0.20.1-1-cp38-abi3-manylinux_2_35_aarch64.whl", hash = "sha256:4a5c24a94be8413ce682e72d6c22762ac7be64635cf191f4807d30910f928268", size = 235787780, upload-time = "2026-05-04T10:38:44.956Z" },
-    { url = "https://files.pythonhosted.org/packages/f1/ae/55bb24db43e02a21fe98d64293a309d7cf67054785ac8e8ff2e60e59789e/vllm-0.20.1-1-cp38-abi3-manylinux_2_35_x86_64.whl", hash = "sha256:11907857c94c226caf82ada92ab09b1e0dbf538b5b80a93aed74be29e861020c", size = 244425444, upload-time = "2026-05-04T10:39:12.327Z" },
-    { url = "https://files.pythonhosted.org/packages/a7/23/8b48eeee87d9e5589f11bf5139f768053b90c4f85a33cfb72655a30cd14a/vllm-0.20.1-cp38-abi3-manylinux_2_35_aarch64.whl", hash = "sha256:1cfa5f5654e4c7a8a9f949ef7a9597a63b9736129202c96c006434b57f511223", size = 235787697, upload-time = "2026-05-03T08:25:12.511Z" },
-    { url = "https://files.pythonhosted.org/packages/76/80/16ee5d248a795abefd1476d4884394e3d917c68096f8dd696a8216347a74/vllm-0.20.1-cp38-abi3-manylinux_2_35_x86_64.whl", hash = "sha256:da89341f2a07f49a2571edecbec612071839b04b6d7ea1e3bddb5347d47859df", size = 244425347, upload-time = "2026-05-03T08:25:32.198Z" },
+    { url = "https://files.pythonhosted.org/packages/19/d9/7bef6cf9d7508b4313237602e96e10054c7491f12f48403813c9c2d6f6f1/vllm-0.20.2-cp38-abi3-manylinux_2_35_aarch64.whl", hash = "sha256:76ccf4c0554556c06f6b0fb1643742d4cf97dcc69f6ef3f04556d0764126035a", size = 235788487, upload-time = "2026-05-10T07:38:37.747Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/aa/4488d49c481a2184e6e285b8d3f937905205f52cd5ac30fb348770494b6e/vllm-0.20.2-cp38-abi3-manylinux_2_35_x86_64.whl", hash = "sha256:22a7dd06eb03371298e13d6100f3dedbf307352342aaf08e87c929c60aae9b4d", size = 244425988, upload-time = "2026-05-10T07:39:04.327Z" },
 ]
 
 [[package]]

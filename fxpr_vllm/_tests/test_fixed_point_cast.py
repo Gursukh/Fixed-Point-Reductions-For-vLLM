@@ -69,7 +69,7 @@ def test_float_roundtrip_lossless():
 
 @requires_cuda
 def test_float_roundtrip_rounding():
-    # step=2^-16; off-grid inputs round to the grid.
+    # step is 2^-16; off-grid inputs snap to the nearest grid point.
     frac_bits = 16
     step = 2**-frac_bits
     x = torch.tensor(
@@ -99,8 +99,8 @@ def test_fixed_roundtrip_lossless():
 @requires_cuda
 @pytest.mark.parametrize("frac_bits", [8, 16, 32])
 def test_float_roundtrip_lossless_parametrized_frac_bits(frac_bits):
-    # Powers of 2 are exact at any frac_bits. Use int64 so 1.0 -> 2^32 fits
-    # at frac_bits=32 (would saturate int32).
+    # Powers of 2 are exact at any frac_bits. Use int64 so 1.0 (= 2^32 at
+    # frac_bits=32) fits without saturating int32.
     base = torch.tensor(
         [0.0, 1.0, -1.0, 0.5, -0.5, 0.25, 0.125],
         device="cuda",
@@ -110,4 +110,23 @@ def test_float_roundtrip_lossless_parametrized_frac_bits(frac_bits):
     back = fixed_to_float(q, torch.float32, fxp_frac_bits=frac_bits)
     assert torch.equal(back, base), (
         f"frac_bits={frac_bits}: {base} -> {q} -> {back}"
+    )
+
+
+@requires_cuda
+@pytest.mark.parametrize("frac_bits", [8, 16])
+def test_bf16_input_roundtrip(frac_bits):
+    # bf16 input is upcast to fp32 before the cast. Values that are bf16-exact
+    # and land on the grid round-trip losslessly. We read back as fp32 since
+    # fixed_to_float has no bf16 output.
+    base_f32 = torch.tensor(
+        [0.0, 1.0, -1.0, 0.5, -0.5, 0.25, 2.5, -3.25],
+        device="cuda",
+        dtype=torch.float32,
+    )
+    x = base_f32.to(torch.bfloat16)
+    q = float_to_fixed(x, torch.int32, fxp_frac_bits=frac_bits)
+    back = fixed_to_float(q, torch.float32, fxp_frac_bits=frac_bits)
+    assert torch.equal(back, base_f32), (
+        f"bf16 frac_bits={frac_bits}: {x} -> {q} -> {back}"
     )

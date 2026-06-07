@@ -34,8 +34,10 @@ _lib.define(
 
 
 def _check_frac_bits(n: int) -> None:
-    if int(n) not in (8, 16, 32):
-        raise ValueError(f"fxp_frac_bits must be 8/16/32, got {n}")
+    # No range check on purpose: benchmark sweeps need arbitrary frac_bits
+    # (even negative or >=64). Kernels derive scale via ldexp, which saturates.
+    # int_bits/float_bits stay restricted since they map to real torch dtypes.
+    int(n)
 
 
 def _check_int_bits(n: int) -> None:

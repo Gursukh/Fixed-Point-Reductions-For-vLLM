@@ -14,13 +14,13 @@ from .fixed_point_helpers import requires_cuda, skip_if_dtype_unsupported
 
 
 def test_resolve_split_k_uses_cache_then_persistent():
-    """The runtime split decision reads the warmup-measured cache, honours a
-    forced override, and clamps on int16 / K-tiles / c_int scratch / lock buffer.
-    An un-probed shape stays persistent. No GPU needed."""
+    """_resolve_split_k should use the warmup cache, respect a forced override,
+    and fall back to persistent when int16, K-tiles, scratch, or the lock buffer
+    don't allow a split. Un-probed shapes stay persistent. No GPU needed."""
     dtype = torch.bfloat16
     key = (3, 4096, 14336, dtype, 32)  # (sk_pid_m, N, K, dtype, int_bits)
-    big = 10**12  # scratch / locks large enough not to bind
-    tiles = 192   # sk_num_tiles_mn, within any non-binding lock capacity
+    big = 10**12  # scratch/locks big enough to never be the limiter
+    tiles = 192   # sk_num_tiles_mn, fits any non-binding lock capacity
     saved = dict(gemm._SPLITK_CHOICE)
     try:
         gemm._SPLITK_FORCE = None
@@ -30,11 +30,11 @@ def test_resolve_split_k_uses_cache_then_persistent():
         gemm._SPLITK_CHOICE[key] = 2
         assert _resolve_split_k(3, 112, 32, 192, 4096, 14336, dtype, big, tiles, big) == 2
 
-        # cached persistent is honoured
+        # cached persistent (1) is used as-is
         gemm._SPLITK_CHOICE[key] = 1
         assert _resolve_split_k(3, 112, 32, 192, 4096, 14336, dtype, big, tiles, big) == 1
 
-        # a forced value beats the cache (this is how warmup times each path)
+        # a forced value beats the cache (how warmup times each path)
         gemm._SPLITK_FORCE = 2
         assert _resolve_split_k(3, 112, 32, 192, 4096, 14336, dtype, big, tiles, big) == 2
         gemm._SPLITK_FORCE = None
@@ -42,18 +42,18 @@ def test_resolve_split_k_uses_cache_then_persistent():
         # int16 never splits, regardless of cache
         assert _resolve_split_k(3, 112, 16, 192, 4096, 14336, dtype, big, tiles, big) == 1
 
-        # scratch too small for M*N -> persistent
+        # scratch too small for M*N falls back to persistent
         gemm._SPLITK_CHOICE[key] = 2
         assert _resolve_split_k(3, 112, 32, 192, 4096, 14336, dtype, 1, tiles, big) == 1
 
         # more (m,n) tiles than the lock buffer holds -> persistent. This is the
-        # case that corrupted Llama: a wide-N layer's tile count outran the locks.
+        # bug that corrupted Llama: a wide-N layer's tile count outran the locks.
         assert _resolve_split_k(3, 112, 32, 192, 4096, 14336, dtype, big, 5000, 256) == 1
 
         # fewer K-tiles than the split count -> persistent
         assert _resolve_split_k(3, 1, 32, 192, 4096, 14336, dtype, big, tiles, big) == 1
 
-        # un-probed tile count (empty cache) -> persistent
+        # un-probed tile count (empty cache) stays persistent
         gemm._SPLITK_CHOICE.clear()
         assert _resolve_split_k(1, 112, 32, 64, 4096, 14336, dtype, big, tiles, big) == 1
     finally:
@@ -64,18 +64,18 @@ def test_resolve_split_k_uses_cache_then_persistent():
 
 @requires_cuda
 def test_warmup_covers_full_M_sweep():
-    """After warmup, hit every M in the bucket range with both bias polarities
-    and check nothing new lands in the autotune cache or _PICKED_CONFIG. A new
-    entry means the runtime hit a JIT path warmup missed."""
+    """After warmup, run every M in the bucket range with and without bias and
+    confirm nothing new shows up in the autotune cache or _PICKED_CONFIG. A new
+    entry would mean the runtime hit a JIT path warmup missed."""
     dtype = torch.float16
     skip_if_dtype_unsupported(dtype)
 
-    # small N widens the split-K range, so this shape exercises more binaries.
+    # Small N widens the split-K range, so this shape hits more binaries.
     K, N = 4096, 64
-    # weight_native is the (K, N) transpose of an (out=N, in=K) Linear.
+    # w is the (K, N) transpose of an (out=N, in=K) Linear weight.
     w = torch.zeros(K, N, device="cuda", dtype=dtype)
 
-    # drop any prior warmup state so we're testing this run, not a leftover.
+    # Drop any prior warmup state so we test this run, not a leftover.
     _gemm_warmed.discard((K, N, dtype, 32, 16))
 
     warmup_gemm(w, 32, 16)
@@ -84,7 +84,7 @@ def test_warmup_covers_full_M_sweep():
     picked_keys_after = set(_PICKED_CONFIG.keys())
 
     bias = torch.zeros(N, device="cuda", dtype=dtype)
-    # walk every M, plus block boundaries and bucket edges to be safe.
+    # Walk every M, plus block boundaries and bucket edges to be safe.
     sk_block_m = _CFG_SPLITK[0]
     sweep = set()
     for M in range(1, _M_BUCKETS[-1] + 1):
@@ -111,7 +111,7 @@ def test_warmup_covers_full_M_sweep():
 
 @requires_cuda
 def test_warmup_dedup():
-    """Second warmup_gemm on the same shape should do nothing."""
+    """A second warmup_gemm on the same shape should be a no-op."""
     dtype = torch.float16
     skip_if_dtype_unsupported(dtype)
 

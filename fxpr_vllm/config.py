@@ -43,11 +43,17 @@ def load_runtime_config() -> FxpRuntimeConfig:
             DEFAULT_FXP_INT_BITS,
         )
         int_bits = DEFAULT_FXP_INT_BITS
+    # Storage width is 16/32/64, but frac_bits is free within that: any value in
+    # [1, int_bits) works (need at least the sign bit). This is the accuracy vs
+    # range knob.
     frac_bits = _env_int("FXPR_FRAC_BITS", DEFAULT_FXP_FRAC_BITS)
-    if frac_bits not in (8, 16, 32):
+    if not (1 <= frac_bits < int_bits):
         logger.warning(
-            "Invalid FXPR_FRAC_BITS=%d; must be 8/16/32. Using default %d.",
+            "Invalid FXPR_FRAC_BITS=%d; must be an integer in [1, %d) for "
+            "FXPR_INT_BITS=%d. Using default %d.",
             frac_bits,
+            int_bits,
+            int_bits,
             DEFAULT_FXP_FRAC_BITS,
         )
         frac_bits = DEFAULT_FXP_FRAC_BITS

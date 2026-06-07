@@ -14,8 +14,8 @@ _PREFILL_HEADS = 2
 _PREFILL_KV_HEADS = 2
 _PREFILL_HEAD_DIM = 32
 _PREFILL_SM_SCALE = 1.0 / (_PREFILL_HEAD_DIM**0.5)
-# Multiple of every dtype's BLOCK_N (64 fp16/bf16, 32 fp32) so permuting a
-# block of this size permutes whole K-tiles.
+# Multiple of every dtype's BLOCK_N (64 for fp16/bf16, 32 for fp32) so a
+# permutation at this granularity moves whole K-tiles.
 _PERM_BLOCK = 64
 
 
@@ -77,7 +77,7 @@ def _run_prefill(
     q, k, v, b_start_loc, b_seq_len, max_input_len, dtype,
     *, is_causal=True, num_kv_splits=1,
 ):
-    """Cast fp32 inputs to dtype, run the kernel, return fp32 output."""
+    """Cast fp32 inputs to dtype, run the kernel, return the output as fp32."""
     o = torch.empty(q.shape, device="cuda", dtype=dtype)
     prefill_fxp_test(
         q.to(dtype),
@@ -140,7 +140,7 @@ def test_prefill_correctness_non_causal(dtype):
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_prefill_variable_seq_lens(dtype):
     skip_if_dtype_unsupported(dtype)
-    # Non-multiples of BLOCK_M/BLOCK_N exercise the ragged masking.
+    # Non-multiples of BLOCK_M/BLOCK_N exercise the ragged-tail masking.
     seq_lens = [70, 128, 100]
     q, k, v, b_start_loc, b_seq_len = _make_inputs(
         3, seq_lens, _PREFILL_HEADS, _PREFILL_KV_HEADS, _PREFILL_HEAD_DIM, seed=99
@@ -163,7 +163,8 @@ def test_prefill_variable_seq_lens(dtype):
 @pytest.mark.parametrize("num_kv_splits", [1, 2, 4, 8])
 def test_prefill_invariant_across_kv_splits(dtype, num_kv_splits):
     skip_if_dtype_unsupported(dtype)
-    # splits=1 uses the fused path, >1 the atomic-add split path; must match.
+    # splits=1 takes the fused path, >1 takes the atomic-add split path. Outputs
+    # must match.
     seq_lens = [96, 64]
     q, k, v, b_start_loc, b_seq_len = _make_inputs(
         2, seq_lens, _PREFILL_HEADS, _PREFILL_KV_HEADS, _PREFILL_HEAD_DIM, seed=5
@@ -247,8 +248,9 @@ def test_float_accumulation_is_order_dependent():
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_fixedpoint_prefill_is_tile_permutation_invariant(dtype):
     skip_if_dtype_unsupported(dtype)
-    # Permuting whole BLOCK_N-aligned KV tiles is bit-exact (cross-tile reduction
-    # is an integer sum). Element-level permutation is not; same contract as gemm.
+    # Permuting whole BLOCK_N-aligned KV tiles is bit-exact since the cross-tile
+    # reduction is an integer sum. Per-element permutation is not. Same contract
+    # as gemm.
     seq_len = 3 * _PERM_BLOCK
     g = torch.Generator(device="cuda").manual_seed(7)
     shape = (seq_len, _PREFILL_HEADS, _PREFILL_HEAD_DIM)

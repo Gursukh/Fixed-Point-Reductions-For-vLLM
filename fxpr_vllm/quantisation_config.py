@@ -56,10 +56,9 @@ class FixedPointConfig(QuantizationConfig):
     ) -> "QuantizeMethodBase | None":
         if isinstance(layer, LinearBase):
             return FixedPointLinearMethod(self)
-        # ParallelLMHead subclasses this. cuBLAS switches GEMV (M=1) vs GEMM
-        # (M>=2), flipping tokens on Blackwell; gemm_fxp stays batch-invariant.
-        # On by default (mirrors RMS norm, opt out via FXPR_DISABLE_LM_HEAD);
-        # when disabled the lm_head matmul falls back to vLLM's default method.
+        # ParallelLMHead subclasses this. cuBLAS picks GEMV at M=1 and GEMM at
+        # M>=2, which flips tokens on Blackwell; gemm_fxp stays batch-invariant.
+        # On by default; opt out via FXPR_DISABLE_LM_HEAD to use vLLM's default.
         if isinstance(layer, VocabParallelEmbedding):
             if get_runtime_config().enable_lm_head:
                 return FixedPointEmbeddingMethod(self)
@@ -104,7 +103,7 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         set_weight_attrs(weight, extra_weight_attrs)
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        # stored as (out, in); GEMM wants (K, N) = (in, out).
+        # weight is (out, in); GEMM wants (K, N) = (in, out).
         with torch.no_grad():
             w_t = layer.weight.data.t().contiguous()
 
@@ -112,10 +111,9 @@ class FixedPointLinearMethod(QuantizeMethodBase):
         del layer.weight
         layer.register_parameter("weight", None)
 
-        # warm gemm_fxp for this shape at load time to avoid a JIT spike.
+        # warm gemm_fxp for this shape now so we don't JIT on first request.
         warmup_gemm(layer.weight_native, self.fxp_int_bits, self.fxp_frac_bits)
-        # one rms_norm binary per (hidden, dtype) covers every batch size; warm
-        # it here on the same load path as the gemm.
+        # warm rms_norm too; one binary per (hidden, dtype) covers all batches.
         K = layer.weight_native.shape[0]
         warmup_rms_norm(K, layer.weight_native.dtype, layer.weight_native.device)
 
@@ -133,7 +131,7 @@ class FixedPointLinearMethod(QuantizeMethodBase):
 class FixedPointEmbeddingMethod(QuantizeMethodBase):
     """Quant method for VocabParallelEmbedding / ParallelLMHead.
 
-    Lookups stay on F.embedding; only the lm_head matmul uses gemm_fxp.
+    Embedding lookups stay on F.embedding; only the lm_head matmul uses gemm_fxp.
     """
 
     def __init__(self, config: FixedPointConfig) -> None:
@@ -152,7 +150,7 @@ class FixedPointEmbeddingMethod(QuantizeMethodBase):
         params_dtype: torch.dtype,
         **extra_weight_attrs: Any,
     ) -> None:
-        # plain Parameter; the loader ignores ModelWeightParameter dims anyway.
+        # plain Parameter is fine; the loader ignores ModelWeightParameter dims.
         weight = nn.Parameter(
             torch.empty(
                 sum(output_partition_sizes),
@@ -166,12 +164,12 @@ class FixedPointEmbeddingMethod(QuantizeMethodBase):
         set_weight_attrs(weight, extra_weight_attrs)
 
     def process_weights_after_loading(self, layer: nn.Module) -> None:
-        # weight stays for F.embedding; weight_native is its transpose for
-        # the lm_head matmul.
+        # keep weight for F.embedding; weight_native is its transpose for the
+        # lm_head matmul.
         with torch.no_grad():
             layer.weight_native = layer.weight.data.t().contiguous()
 
-        # warm gemm_fxp for the lm_head shape at load time.
+        # warm gemm_fxp for the lm_head shape now.
         warmup_gemm(layer.weight_native, self.fxp_int_bits, self.fxp_frac_bits)
 
     def apply(

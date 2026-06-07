@@ -19,7 +19,7 @@ from .config import get_runtime_config
 
 logger = logging.getLogger("fxpr_vllm")
 
-# softmax runs in log2 space, so scale alibi slopes by 1/ln(2).
+# softmax runs in log2 space, so alibi slopes get scaled by 1/ln(2).
 RCP_LN2 = 1.4426950408889634
 
 _flash_meta_cls: type[AttentionMetadata] | None = None
@@ -173,7 +173,7 @@ class DeterministicAttentionImpl(AttentionImpl):
                 "DeterministicAttention does not support fp8/quantized output scales."
             )
 
-        # warm kernels on first forward so requests don't pay a JIT spike.
+        # warm kernels on first forward so requests don't eat a JIT spike.
         from .warmup import warmup_attention
 
         warmup_attention(
@@ -212,7 +212,7 @@ class DeterministicAttentionImpl(AttentionImpl):
         if self.alibi_slopes is not None and self.alibi_slopes.device != query.device:
             self.alibi_slopes = self.alibi_slopes.to(query.device)
 
-        # avoid the .to() dispatch when already int32 (called per layer).
+        # skip the .to() dispatch when already int32 (this runs per layer).
         query_start_loc = attn_metadata.query_start_loc
         if query_start_loc.dtype != torch.int32:
             query_start_loc = query_start_loc.to(torch.int32)

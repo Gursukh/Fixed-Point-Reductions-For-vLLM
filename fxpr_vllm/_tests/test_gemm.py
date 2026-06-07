@@ -122,7 +122,7 @@ def test_gemm_native_dtype_vec_path(dtype, M, N, K):
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 def test_gemm_native_dtype_scalar_fallback(dtype):
     skip_if_dtype_unsupported(dtype)
-    # K=33 hits the K-tail path.
+    # K=33 forces the scalar K-tail path.
     M, N, K = 4, 4, 33
     g = torch.Generator(device="cuda").manual_seed(0)
     a_f32 = torch.randn((M, K), device="cuda", dtype=torch.float32, generator=g) * 0.5
@@ -196,7 +196,7 @@ def test_gemm_with_bias(dtype, M, N, K):
 @requires_cuda
 def test_gemm_large_shape():
     skip_if_dtype_unsupported(torch.float32)
-    # Spans multiple 128x128 tiles in both dims.
+    # Big enough to span several 128x128 tiles in both dims.
     M, K, N = 256, 256, 256
     g = torch.Generator(device="cuda").manual_seed(5)
     a = torch.randn((M, K), device="cuda", dtype=torch.float32, generator=g) * 0.3
@@ -214,11 +214,11 @@ def test_gemm_large_shape():
 @requires_cuda
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 def test_gemm_ktile_permutation_invariance(dtype):
-    # Permuting whole K-tiles is bit-exact (element-level permutation isn't).
+    # Permuting whole K-tiles is bit-exact. Per-element permutation is not.
     skip_if_dtype_unsupported(dtype)
     g = torch.Generator(device="cuda").manual_seed(123)
 
-    # Read BLOCK_K from the kernel so this stays in sync if it is retuned.
+    # Pull BLOCK_K from the kernel so this stays correct if it gets retuned.
     from fxpr_vllm._triton.gemm import _BLOCK_K_BY_DTYPE
     K_TILE = _BLOCK_K_BY_DTYPE[dtype]
     NUM_TILES = 4
@@ -245,7 +245,7 @@ def test_gemm_ktile_permutation_invariance(dtype):
 @requires_cuda
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 def test_gemm_batch_size_invariance(dtype):
-    # Point of fxp: c[m, :] is the same regardless of batch.
+    # The whole point of fxp: c[m, :] is identical no matter the batch size.
     skip_if_dtype_unsupported(dtype)
     g = torch.Generator(device="cuda").manual_seed(2026)
 
@@ -275,7 +275,7 @@ def test_gemm_parametrized_int_bits(int_bits):
     skip_if_dtype_unsupported(torch.float32)
     g = torch.Generator(device="cuda").manual_seed(int_bits)
 
-    # Small values keep partial products in range at int_bits=32.
+    # Keep values small so partial products don't overflow int_bits=32.
     a = torch.randn((4, 16), device="cuda", dtype=torch.float32, generator=g) * 0.25
     b = torch.randn((16, 4), device="cuda", dtype=torch.float32, generator=g) * 0.25
 

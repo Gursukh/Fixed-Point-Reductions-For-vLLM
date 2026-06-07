@@ -5,7 +5,7 @@ from .fixed_point_helpers import float_to_fixed, requires_cuda, fixed_to_float
 def assert_bitwise_equal_float32(a: torch.Tensor, b: torch.Tensor) -> None:
     assert a.dtype == torch.float32
     assert b.dtype == torch.float32
-    # Compare bit patterns, not float equality.
+    # Compare raw bits, not float equality.
     assert torch.equal(a.reshape(1).view(torch.int32), b.reshape(1).view(torch.int32))
 
 
@@ -49,7 +49,7 @@ def ordered_fixed_sum_as_float(
 
 @requires_cuda
 def test_sum_on_q_grid_bitwise_identical():
-    # Q values that round-trip exactly.
+    # Q values picked to round-trip exactly.
     q_vals = torch.tensor(
         [0, 1, -1, 37, -53, 512, -1024, 4095, -777],
         device="cuda",
@@ -66,7 +66,7 @@ def test_sum_on_q_grid_bitwise_identical():
 
 @requires_cuda
 def test_sum_overflow_saturates_to_int32_max():
-    # |x| > 32768 saturates per-element, so the sum does too.
+    # |x| > 32768 saturates each element, so the sum saturates too.
     x = torch.tensor(
         [float(1 << 14), float(1 << 14), 16.0],
         device="cuda",
@@ -103,7 +103,7 @@ def test_sum_underflow_saturates_to_int32_min():
 
 @requires_cuda
 def test_associativity_float_non_assoc_fixed_assoc():
-    # fp16 drops the +1 at large magnitudes; int64 fxp keeps it.
+    # fp16 loses the +1 at large magnitudes; int64 fxp keeps it.
     order_a = [65504.0, -65504.0, 1.0]
     order_b = [65504.0, 1.0, -65504.0]
 

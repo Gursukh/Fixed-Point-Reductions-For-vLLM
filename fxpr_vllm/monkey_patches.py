@@ -17,8 +17,8 @@ def patch_rms_norm() -> None:
     op_registry_oot["RMSNorm"] = DeterministicRMSNorm
     layernorm_mod.RMSNorm = DeterministicRMSNorm
 
-    # `from ... import RMSNorm` binds the original class, so models already
-    # imported won't pick up the patch.
+    # Models that already did `from ... import RMSNorm` hold the old class and
+    # won't see this patch.
     early = [m for m in sys.modules if m.startswith("vllm.model_executor.models.")]
     if early:
         logger.warning(
